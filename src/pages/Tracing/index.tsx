@@ -34,23 +34,22 @@ function getSlabStage(slab: Slab): number {
   const order = [
     'pending_cut',
     'cut',
-    'cleaning',
+    'recheck_pending',
     'cleaned',
-    'pending_warehouse',
     'warehoused',
+    'outbound',
   ];
   const idx = order.indexOf(slab.status);
   if (idx === -1) return 0;
-  // Map to 7 stages: ladle(0)->tundish(1)->mold(2)->cooling(3)->cutting(4)->cleaning(5)->warehouse(6)
-  // Status pending_cut means it's still going through cooling stage
   const stageMap = [3, 4, 5, 5, 6, 6];
   return stageMap[idx] ?? 0;
 }
 
 export default function TracingPage() {
-  const { ladleList, slabList, cuttingRecords, cleaningRecords } = useProductionStore();
+  const { ladleList, slabList, cuttingRecords, cleaningRecords, reInspectionRecords } = useProductionStore();
   const [searchText, setSearchText] = useState('');
   const [heatFilter, setHeatFilter] = useState<string>('');
+  const [ladleFilter, setLadleFilter] = useState<string>('');
   const [selectedSlab, setSelectedSlab] = useState<Slab | null>(null);
 
   // Group slabs by ladle
@@ -64,21 +63,55 @@ export default function TracingPage() {
     return map;
   }, [slabList]);
 
+  // Heat options (from ladle list)
   const heatOptions = useMemo(() => {
     const set = new Set<string>();
     ladleList.forEach((l) => l.heatNo && set.add(l.heatNo));
     slabList.forEach((s) => {
-      if (s.ladleNo) set.add(s.ladleNo);
+      if (s.heatNo) set.add(s.heatNo);
     });
-    return Array.from(set);
+    return Array.from(set).sort();
   }, [ladleList, slabList]);
+
+  // Ladle options (filtered by heat if selected)
+  const ladleOptions = useMemo(() => {
+    let ladles: string[] = Array.from(slabsByLadle.keys());
+    if (heatFilter) {
+      // Only show ladles that belong to the selected heat
+      const heatLadles = new Set<string>();
+      ladleList.forEach((l) => {
+        if (l.heatNo === heatFilter) heatLadles.add(l.ladleNo);
+      });
+      slabList.forEach((s) => {
+        if (s.heatNo === heatFilter && s.ladleNo) heatLadles.add(s.ladleNo);
+      });
+      ladles = ladles.filter((l) => heatLadles.has(l));
+    }
+    return ladles.sort();
+  }, [slabsByLadle, heatFilter, ladleList, slabList]);
 
   // Filter
   const filteredLadleNos = useMemo(() => {
     let keys = Array.from(slabsByLadle.keys());
+
+    // Filter by heat first
     if (heatFilter) {
-      keys = keys.filter((k) => k.includes(heatFilter));
+      const validLadles = new Set<string>();
+      ladleList.forEach((l) => {
+        if (l.heatNo === heatFilter) validLadles.add(l.ladleNo);
+      });
+      slabList.forEach((s) => {
+        if (s.heatNo === heatFilter && s.ladleNo) validLadles.add(s.ladleNo);
+      });
+      keys = keys.filter((k) => validLadles.has(k));
     }
+
+    // Filter by specific ladle
+    if (ladleFilter) {
+      keys = keys.filter((k) => k === ladleFilter);
+    }
+
+    // Filter by search text
     if (searchText) {
       const s = searchText.toLowerCase();
       keys = keys.filter((k) => {
@@ -87,17 +120,22 @@ export default function TracingPage() {
         return slabs.some(
           (slab) =>
             slab.slabNo.toLowerCase().includes(s) ||
-            (slab.position && slab.position.toLowerCase().includes(s))
+            (slab.position && slab.position.toLowerCase().includes(s)) ||
+            (slab.heatNo && slab.heatNo.toLowerCase().includes(s)) ||
+            (slab.steelGrade && slab.steelGrade.toLowerCase().includes(s))
         );
       });
     }
+
     return keys;
-  }, [slabsByLadle, heatFilter, searchText]);
+  }, [slabsByLadle, heatFilter, ladleFilter, searchText, ladleList, slabList]);
 
   const getCutRecord = (slabId: string) =>
     cuttingRecords.find((r) => r.slabId === slabId);
   const getCleanRecord = (slabId: string) =>
     cleaningRecords.find((r) => r.slabId === slabId);
+  const getReInspectionsOfSlab = (slabId: string) =>
+    reInspectionRecords.filter((r) => r.slabId === slabId);
   const getLadle = (ladleNo: string) =>
     ladleList.find((l) => l.ladleNo === ladleNo);
 
@@ -115,7 +153,7 @@ export default function TracingPage() {
             <Search className="w-4 h-4 text-steel-500 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
-              placeholder="搜索钢包号/板坯号/库位..."
+              placeholder="搜索钢包号/板坯号/库位/钢种..."
               value={searchText}
               onChange={(e) => setSearchText(e.target.value)}
               className="input-field pl-9 w-64"
@@ -123,13 +161,29 @@ export default function TracingPage() {
           </div>
           <select
             value={heatFilter}
-            onChange={(e) => setHeatFilter(e.target.value)}
+            onChange={(e) => {
+              setHeatFilter(e.target.value);
+              setLadleFilter('');
+            }}
             className="input-field w-56"
           >
-            <option value="">全部浇次/钢包</option>
+            <option value="">全部炉号</option>
             {heatOptions.map((h) => (
               <option key={h} value={h}>
-                {h}
+                炉号: {h}
+              </option>
+            ))}
+          </select>
+          <select
+            value={ladleFilter}
+            onChange={(e) => setLadleFilter(e.target.value)}
+            className="input-field w-64"
+            disabled={!heatFilter && ladleOptions.length > 10}
+          >
+            <option value="">全部钢包</option>
+            {ladleOptions.map((l) => (
+              <option key={l} value={l}>
+                钢包: {l}
               </option>
             ))}
           </select>
@@ -494,6 +548,78 @@ export default function TracingPage() {
                   );
                 })()}
               </div>
+
+              {/* Re-inspection history */}
+              {getReInspectionsOfSlab(selectedSlab.id).length > 0 && (
+                <div>
+                  <h4 className="text-sm font-semibold text-steel-200 mb-3 flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-orange-400" />
+                    复检历史记录
+                  </h4>
+                  <div className="relative pl-5 border-l-2 border-steel-700/60 space-y-4">
+                    {getReInspectionsOfSlab(selectedSlab.id)
+                      .sort((a, b) => new Date(b.recheckTime).getTime() - new Date(a.recheckTime).getTime())
+                      .map((rec, idx) => {
+                        const resultLabels: Record<string, { text: string; color: string }> = {
+                          qualified: { text: '合格放行', color: 'text-green-400' },
+                          repaired: { text: '修磨后合格', color: 'text-blue-400' },
+                          recheck: { text: '再次复检', color: 'text-yellow-400' },
+                          scrap: { text: '判废', color: 'text-red-400' },
+                        };
+                        const label = resultLabels[rec.inspectionResult] || { text: rec.inspectionResult, color: 'text-white' };
+                        return (
+                          <div key={rec.id} className="relative">
+                            <span
+                              className={`absolute -left-[22px] top-1 w-3 h-3 rounded-full bg-steel-900 border-2 ${
+                                rec.inspectionResult === 'qualified'
+                                  ? 'border-green-400'
+                                  : rec.inspectionResult === 'repaired'
+                                  ? 'border-blue-400'
+                                  : rec.inspectionResult === 'recheck'
+                                  ? 'border-yellow-400'
+                                  : 'border-red-400'
+                              }`}
+                            />
+                            <div className="bg-steel-800/40 border border-steel-700/50 rounded-lg p-4">
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="text-sm font-semibold text-white">
+                                  第 {idx + 1} 次复检
+                                </span>
+                                <StatusBadge
+                                  status={
+                                    rec.inspectionResult === 'qualified' || rec.inspectionResult === 'repaired'
+                                      ? 'success'
+                                      : rec.inspectionResult === 'recheck'
+                                      ? 'warning'
+                                      : 'danger'
+                                  }
+                                  text={label.text}
+                                  size="sm"
+                                />
+                              </div>
+                              <div className="grid grid-cols-2 gap-3 text-xs">
+                                <div>
+                                  <p className="text-steel-500 mb-0.5">检验员</p>
+                                  <p className="text-white">{rec.inspector}</p>
+                                </div>
+                                <div>
+                                  <p className="text-steel-500 mb-0.5">复检时间</p>
+                                  <p className="text-white font-mono">{rec.recheckTime}</p>
+                                </div>
+                                {rec.remark && (
+                                  <div className="col-span-2">
+                                    <p className="text-steel-500 mb-0.5">备注</p>
+                                    <p className="text-white">{rec.remark}</p>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+              )}
 
               {/* Warehouse */}
               <div>

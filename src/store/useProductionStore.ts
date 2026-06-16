@@ -15,6 +15,11 @@ import type {
   MoldStatus,
   CuttingRecord,
   CleaningRecord,
+  ReInspectionRecord,
+  WarehouseTransferRecord,
+  OutboundRecord,
+  WarehouseHistoryItem,
+  TransferType,
 } from '@/types';
 import {
   mockLadleList,
@@ -53,6 +58,9 @@ interface PersistedState {
   alerts: Alert[];
   cuttingRecords: CuttingRecord[];
   cleaningRecords: CleaningRecord[];
+  reInspectionRecords: ReInspectionRecord[];
+  warehouseTransferRecords: WarehouseTransferRecord[];
+  outboundRecords: OutboundRecord[];
   tundish: Tundish;
   mold: Mold;
   secondaryCoolingZones: SecondaryCoolingZone[];
@@ -95,6 +103,9 @@ interface ProductionState {
   alerts: Alert[];
   cuttingRecords: CuttingRecord[];
   cleaningRecords: CleaningRecord[];
+  reInspectionRecords: ReInspectionRecord[];
+  warehouseTransferRecords: WarehouseTransferRecord[];
+  outboundRecords: OutboundRecord[];
 
   // UI state (not persisted)
   productionStats: ProductionStats;
@@ -124,13 +135,22 @@ interface ProductionState {
   // Slab
   addSlab: (slab: Omit<Slab, 'id'>) => void;
   updateSlabStatus: (id: string, status: Slab['status']) => void;
-  updateSlabWarehouse: (id: string, data: Partial<Slab>) => void;
+  updateSlabWarehouse: (id: string, data: Partial<Slab> & { operator?: string }) => void;
 
   // Cutting records
   addCuttingRecord: (record: Omit<CuttingRecord, 'id'>) => void;
 
   // Cleaning records
   addCleaningRecord: (record: Omit<CleaningRecord, 'id'>) => void;
+
+  // Re-inspection
+  addReInspectionRecord: (record: Omit<ReInspectionRecord, 'id'>) => void;
+  getReInspectionRecordsBySlab: (slabId: string) => ReInspectionRecord[];
+
+  // Warehouse transfers & outbound
+  transferSlab: (slabId: string, toPosition: string, operator: string, reason?: string) => void;
+  outboundSlab: (slabId: string, destination: string, transporter: string, operator: string, remark?: string) => void;
+  getSlabWarehouseHistory: (slabId: string) => WarehouseHistoryItem[];
 
   // Alerts
   addAlert: (alert: Omit<Alert, 'id' | 'time' | 'resolved'>) => string;
@@ -154,6 +174,9 @@ export const useProductionStore = create<ProductionState>((set, get) => ({
   alerts: stored?.alerts ?? mockAlerts,
   cuttingRecords: stored?.cuttingRecords ?? mockCuttingRecords,
   cleaningRecords: stored?.cleaningRecords ?? mockCleaningRecords,
+  reInspectionRecords: stored?.reInspectionRecords ?? [],
+  warehouseTransferRecords: stored?.warehouseTransferRecords ?? [],
+  outboundRecords: stored?.outboundRecords ?? [],
 
   productionStats: mockProductionStats,
   temperatureHistory: mockTemperatureHistory,
@@ -174,6 +197,9 @@ export const useProductionStore = create<ProductionState>((set, get) => ({
       alerts: s.alerts,
       cuttingRecords: s.cuttingRecords,
       cleaningRecords: s.cleaningRecords,
+      reInspectionRecords: s.reInspectionRecords,
+      warehouseTransferRecords: s.warehouseTransferRecords,
+      outboundRecords: s.outboundRecords,
       castingSpeed: s.castingSpeed,
     });
   },
@@ -268,15 +294,6 @@ export const useProductionStore = create<ProductionState>((set, get) => ({
     get()._persist();
   },
 
-  updateSlabWarehouse: (id, data) => {
-    set((s) => ({
-      slabList: s.slabList.map((slab) =>
-        slab.id === id ? { ...slab, ...data, status: 'warehoused' } : slab
-      ),
-    }));
-    get()._persist();
-  },
-
   // ===== Cutting Records =====
   addCuttingRecord: (record) => {
     const newRecord: CuttingRecord = { ...record, id: generateId() };
@@ -300,6 +317,7 @@ export const useProductionStore = create<ProductionState>((set, get) => ({
     set((s) => ({ cleaningRecords: [newRecord, ...s.cleaningRecords] }));
     // Also link cleaning result to slab
     if (record.slabId) {
+      const newStatus = record.cleaningResult === 'recheck' ? 'recheck_pending' : 'cleaned';
       set((s) => ({
         slabList: s.slabList.map((slab) =>
           slab.id === record.slabId
@@ -308,13 +326,179 @@ export const useProductionStore = create<ProductionState>((set, get) => ({
                 cleaningResult: record.cleaningResult,
                 defectType: record.defectType,
                 cleaningTime: record.cleaningTime,
-                status: 'cleaned' as const,
+                status: newStatus,
               }
             : slab
         ),
       }));
     }
     get()._persist();
+  },
+
+  // ===== Re-inspection Records =====
+  addReInspectionRecord: (record) => {
+    const newRecord: ReInspectionRecord = { ...record, id: generateId() };
+    set((s) => ({ reInspectionRecords: [newRecord, ...s.reInspectionRecords] }));
+
+    // Update slab status based on latest re-inspection result
+    if (record.slabId) {
+      let newStatus: Slab['status'] = 'recheck_pending';
+      if (record.inspectionResult === 'qualified' || record.inspectionResult === 'repaired') {
+        newStatus = 'cleaned';
+      } else if (record.inspectionResult === 'scrap') {
+        newStatus = 'cleaned'; // 仍可标记，等待特殊处理
+      }
+      set((s) => ({
+        slabList: s.slabList.map((slab) =>
+          slab.id === record.slabId ? { ...slab, status: newStatus } : slab
+        ),
+      }));
+    }
+
+    get()._persist();
+  },
+
+  getReInspectionRecordsBySlab: (slabId) => {
+    return get().reInspectionRecords.filter((r) => r.slabId === slabId);
+  },
+
+  // ===== Slab Warehouse update (with inbound transfer) =====
+  updateSlabWarehouse: (id, data) => {
+    const { operator, ...slabData } = data;
+    set((s) => ({
+      slabList: s.slabList.map((slab) =>
+        slab.id === id ? { ...slab, ...slabData, status: 'warehoused' } : slab
+      ),
+    }));
+
+    // Write inbound transfer record
+    if (slabData.position) {
+      const slab = get().slabList.find((s) => s.id === id);
+      if (slab) {
+        const transfer: WarehouseTransferRecord = {
+          id: generateId(),
+          slabId: id,
+          slabNo: slab.slabNo,
+          transferType: 'inbound',
+          fromPosition: '',
+          toPosition: slabData.position,
+          operator: operator || '系统',
+          transferTime: getCurrentTime(),
+        };
+        set((s) => ({
+          warehouseTransferRecords: [transfer, ...s.warehouseTransferRecords],
+        }));
+      }
+    }
+
+    get()._persist();
+  },
+
+  // ===== Warehouse Transfer (slab shift) =====
+  transferSlab: (slabId, toPosition, operator, reason) => {
+    const slab = get().slabList.find((s) => s.id === slabId);
+    if (!slab || !slab.position) return;
+    if (slab.status !== 'warehoused') return;
+
+    const transfer: WarehouseTransferRecord = {
+      id: generateId(),
+      slabId,
+      slabNo: slab.slabNo,
+      transferType: 'shift',
+      fromPosition: slab.position,
+      toPosition,
+      operator,
+      reason,
+      transferTime: getCurrentTime(),
+    };
+
+    set((s) => ({
+      warehouseTransferRecords: [transfer, ...s.warehouseTransferRecords],
+      slabList: s.slabList.map((sl) =>
+        sl.id === slabId ? { ...sl, position: toPosition } : sl
+      ),
+    }));
+
+    get()._persist();
+  },
+
+  // ===== Outbound =====
+  outboundSlab: (slabId, destination, transporter, operator, remark) => {
+    const slab = get().slabList.find((s) => s.id === slabId);
+    if (!slab || !slab.position) return;
+
+    const outbound: OutboundRecord = {
+      id: generateId(),
+      slabId,
+      slabNo: slab.slabNo,
+      position: slab.position,
+      destination,
+      transporter,
+      operator,
+      outboundTime: getCurrentTime(),
+      remark,
+    };
+
+    // Also write outbound transfer record
+    const transfer: WarehouseTransferRecord = {
+      id: generateId(),
+      slabId,
+      slabNo: slab.slabNo,
+      transferType: 'outbound',
+      fromPosition: slab.position,
+      toPosition: '',
+      operator,
+      reason: destination,
+      transferTime: getCurrentTime(),
+    };
+
+    set((s) => ({
+      outboundRecords: [outbound, ...s.outboundRecords],
+      warehouseTransferRecords: [transfer, ...s.warehouseTransferRecords],
+      slabList: s.slabList.map((sl) =>
+        sl.id === slabId ? { ...sl, status: 'outbound', position: undefined } : sl
+      ),
+    }));
+
+    get()._persist();
+  },
+
+  getSlabWarehouseHistory: (slabId): WarehouseHistoryItem[] => {
+    const transfers = get().warehouseTransferRecords.filter((t) => t.slabId === slabId);
+    const history: WarehouseHistoryItem[] = [];
+
+    for (const t of transfers) {
+      if (t.transferType === 'inbound') {
+        history.push({
+          type: 'inbound',
+          time: t.transferTime,
+          position: t.toPosition,
+          operator: t.operator,
+        });
+      } else if (t.transferType === 'shift') {
+        history.push({
+          type: 'shift',
+          time: t.transferTime,
+          from: t.fromPosition,
+          to: t.toPosition,
+          operator: t.operator,
+          reason: t.reason,
+        });
+      } else if (t.transferType === 'outbound') {
+        history.push({
+          type: 'outbound',
+          time: t.transferTime,
+          position: t.fromPosition,
+          destination: t.reason || '',
+          operator: t.operator,
+        });
+      }
+    }
+
+    // Sort chronologically (newest first for display)
+    return history.sort(
+      (a, b) => new Date(b.time).getTime() - new Date(a.time).getTime()
+    );
   },
 
   // ===== Alerts =====

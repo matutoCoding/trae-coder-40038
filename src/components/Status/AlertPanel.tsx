@@ -51,16 +51,16 @@ export default function AlertPanel({
 }: AlertPanelProps) {
   const { alerts, resolveAlert } = useProductionStore();
 
-  const filtered = alerts.filter((a) => {
+  // Step 1: filter by module
+  const moduleFiltered = alerts.filter((a) => {
     if (moduleFilter) {
-      // 如果按模块过滤，也展示所有未解决的（因为总览也能看到其他模块）
-      // 但以当前模块为主
-      return a.module === moduleFilter || showAll ? true : false;
+      return a.module === moduleFilter;
     }
     return true;
   });
 
-  const list = showAll ? filtered : filtered.filter((a) => !a.resolved);
+  // Step 2: filter by resolved status (showAll means include resolved)
+  const list = showAll ? moduleFiltered : moduleFiltered.filter((a) => !a.resolved);
   const displayList = list.slice(0, maxItems);
 
   if (displayList.length === 0) {

@@ -4,7 +4,7 @@ export type TundishStatus = 'preparing' | 'pouring' | 'stopped';
 
 export type MoldStatus = 'standby' | 'running' | 'fault';
 
-export type SlabStatus = 'pending_cut' | 'cut' | 'cleaning' | 'cleaned' | 'pending_warehouse' | 'warehoused';
+export type SlabStatus = 'pending_cut' | 'cut' | 'cleaning' | 'recheck_pending' | 'cleaned' | 'pending_warehouse' | 'warehoused' | 'outbound';
 
 export type AlertLevel = 'info' | 'warning' | 'danger';
 
@@ -145,3 +145,45 @@ export interface AlertThresholds {
     waterFlow: { min: number; max: number };
   };
 }
+
+export interface ReInspectionRecord {
+  id: string;
+  slabId: string;
+  slabNo: string;
+  cleaningRecordId: string;
+  inspectionResult: 'qualified' | 'repaired' | 'recheck' | 'scrap';
+  inspector: string;
+  remark: string;
+  recheckTime: string;
+}
+
+export type TransferType = 'inbound' | 'shift' | 'outbound';
+
+export interface WarehouseTransferRecord {
+  id: string;
+  slabId: string;
+  slabNo: string;
+  transferType: TransferType;
+  fromPosition: string;
+  toPosition: string;
+  operator: string;
+  reason?: string;
+  transferTime: string;
+}
+
+export interface OutboundRecord {
+  id: string;
+  slabId: string;
+  slabNo: string;
+  position: string;
+  destination: string;
+  transporter: string;
+  operator: string;
+  outboundTime: string;
+  remark?: string;
+}
+
+export type WarehouseHistoryItem =
+  | { type: 'inbound'; time: string; position: string; operator: string }
+  | { type: 'shift'; time: string; from: string; to: string; operator: string; reason?: string }
+  | { type: 'outbound'; time: string; position: string; destination: string; operator: string };
