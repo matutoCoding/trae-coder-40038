@@ -20,6 +20,13 @@ import type {
   OutboundRecord,
   WarehouseHistoryItem,
   TransferType,
+  QualityDisposalRecord,
+  DisposalStepRecord,
+  DisposalResult,
+  OutboundPlan,
+  OutboundPlanItem,
+  DisposalStatus,
+  OutboundPlanStatus,
 } from '@/types';
 import {
   mockLadleList,
@@ -61,6 +68,8 @@ interface PersistedState {
   reInspectionRecords: ReInspectionRecord[];
   warehouseTransferRecords: WarehouseTransferRecord[];
   outboundRecords: OutboundRecord[];
+  qualityDisposalRecords: QualityDisposalRecord[];
+  outboundPlans: OutboundPlan[];
   tundish: Tundish;
   mold: Mold;
   secondaryCoolingZones: SecondaryCoolingZone[];
@@ -106,6 +115,8 @@ interface ProductionState {
   reInspectionRecords: ReInspectionRecord[];
   warehouseTransferRecords: WarehouseTransferRecord[];
   outboundRecords: OutboundRecord[];
+  qualityDisposalRecords: QualityDisposalRecord[];
+  outboundPlans: OutboundPlan[];
 
   // UI state (not persisted)
   productionStats: ProductionStats;
@@ -154,8 +165,35 @@ interface ProductionState {
 
   // Alerts
   addAlert: (alert: Omit<Alert, 'id' | 'time' | 'resolved'>) => string;
-  resolveAlert: (id: string) => void;
+  resolveAlert: (id: string, resolvedBy?: string, remark?: string) => void;
   checkThresholds: () => void;
+
+  // Quality Disposal
+  createQualityDisposal: (
+    slabId: string,
+    sourceType: 'recheck_scrap' | 'recheck_downgrade' | 'manual',
+    sourceRecordId?: string,
+    reInspectionResult?: 'scrap' | 'downgrade'
+  ) => void;
+  addDisposalStep: (
+    disposalId: string,
+    step: Omit<DisposalStepRecord, 'id' | 'timestamp'>
+  ) => void;
+  getDisposalBySlab: (slabId: string) => QualityDisposalRecord | undefined;
+
+  // Outbound Plans
+  createOutboundPlan: (plan: Omit<OutboundPlan, 'id' | 'createdAt' | 'status' | 'planNo'> & { planNo?: string }) => string;
+  updateOutboundPlan: (planId: string, patch: Partial<OutboundPlan>) => void;
+  addPlanItems: (planId: string, items: Omit<OutboundPlanItem, 'id' | 'status'>[]) => void;
+  removePlanItem: (planId: string, itemId: string) => void;
+  executePlanItemOutbound: (
+    planId: string,
+    itemId: string,
+    operator: string,
+    remark?: string
+  ) => void;
+  completeOutboundPlan: (planId: string) => void;
+  cancelOutboundPlan: (planId: string) => void;
 
   // Real-time simulation
   updateRealTimeData: () => void;
@@ -177,6 +215,8 @@ export const useProductionStore = create<ProductionState>((set, get) => ({
   reInspectionRecords: stored?.reInspectionRecords ?? [],
   warehouseTransferRecords: stored?.warehouseTransferRecords ?? [],
   outboundRecords: stored?.outboundRecords ?? [],
+  qualityDisposalRecords: stored?.qualityDisposalRecords ?? [],
+  outboundPlans: stored?.outboundPlans ?? [],
 
   productionStats: mockProductionStats,
   temperatureHistory: mockTemperatureHistory,
@@ -200,6 +240,8 @@ export const useProductionStore = create<ProductionState>((set, get) => ({
       reInspectionRecords: s.reInspectionRecords,
       warehouseTransferRecords: s.warehouseTransferRecords,
       outboundRecords: s.outboundRecords,
+      qualityDisposalRecords: s.qualityDisposalRecords,
+      outboundPlans: s.outboundPlans,
       castingSpeed: s.castingSpeed,
     });
   },
@@ -345,8 +387,27 @@ export const useProductionStore = create<ProductionState>((set, get) => ({
       let newStatus: Slab['status'] = 'recheck_pending';
       if (record.inspectionResult === 'qualified' || record.inspectionResult === 'repaired') {
         newStatus = 'cleaned';
-      } else if (record.inspectionResult === 'scrap') {
-        newStatus = 'cleaned'; // 仍可标记，等待特殊处理
+      } else if (record.inspectionResult === 'scrap' || record.inspectionResult === 'downgrade') {
+        newStatus = 'disposal_pending';
+        // Auto-create quality disposal record
+        const slab = get().slabList.find((s) => s.id === record.slabId);
+        if (slab) {
+          const disposal: QualityDisposalRecord = {
+            id: generateId(),
+            slabId: slab.id,
+            slabNo: slab.slabNo,
+            sourceType: record.inspectionResult === 'scrap' ? 'recheck_scrap' : 'recheck_downgrade',
+            sourceRecordId: newRecord.id,
+            reInspectionResult: record.inspectionResult,
+            disposalStatus: 'pending',
+            reworkCount: 0,
+            records: [],
+            createdAt: getCurrentTime(),
+          };
+          set((s) => ({
+            qualityDisposalRecords: [disposal, ...s.qualityDisposalRecords],
+          }));
+        }
       }
       set((s) => ({
         slabList: s.slabList.map((slab) =>
@@ -465,6 +526,7 @@ export const useProductionStore = create<ProductionState>((set, get) => ({
 
   getSlabWarehouseHistory: (slabId): WarehouseHistoryItem[] => {
     const transfers = get().warehouseTransferRecords.filter((t) => t.slabId === slabId);
+    const slab = get().slabList.find((s) => s.id === slabId);
     const history: WarehouseHistoryItem[] = [];
 
     for (const t of transfers) {
@@ -495,6 +557,17 @@ export const useProductionStore = create<ProductionState>((set, get) => ({
       }
     }
 
+    // ===== 历史补全：已有在库板坯但无入库调拨记录的，根据 slab.warehouseTime / position 推断 =====
+    const hasInboundRecord = history.some((h) => h.type === 'inbound');
+    if (!hasInboundRecord && slab?.warehouseTime && slab.position) {
+      history.push({
+        type: 'inbound',
+        time: slab.warehouseTime,
+        position: slab.position,
+        operator: '历史数据补录',
+      });
+    }
+
     // Sort chronologically (newest first for display)
     return history.sort(
       (a, b) => new Date(b.time).getTime() - new Date(a.time).getTime()
@@ -523,11 +596,17 @@ export const useProductionStore = create<ProductionState>((set, get) => ({
     return newAlert.id;
   },
 
-  resolveAlert: (id) => {
+  resolveAlert: (id, resolvedBy?, remark?) => {
     set((s) => ({
       alerts: s.alerts.map((a) =>
         a.id === id
-          ? { ...a, resolved: true, resolvedTime: getCurrentTime(), resolvedBy: '当前用户' }
+          ? {
+              ...a,
+              resolved: true,
+              resolvedTime: getCurrentTime(),
+              resolvedBy: resolvedBy || '当前用户',
+              resolvedRemark: remark,
+            }
           : a
       ),
     }));
@@ -656,6 +735,258 @@ export const useProductionStore = create<ProductionState>((set, get) => ({
     // Auto-resolve alerts whose params are now within range (for temperature & level which fluctuate)
     const paramsToAutoClear = new Set(newAlertIds);
     // (not auto-clearing so user sees history; user manually resolves)
+  },
+
+  // ===== Quality Disposal =====
+  createQualityDisposal: (slabId, sourceType, sourceRecordId, reInspectionResult) => {
+    const slab = get().slabList.find((s) => s.id === slabId);
+    if (!slab) return;
+
+    // Avoid duplicate pending disposal for same slab
+    const existing = get().qualityDisposalRecords.find(
+      (d) => d.slabId === slabId && d.disposalStatus !== 'finished'
+    );
+    if (existing) return;
+
+    const disposal: QualityDisposalRecord = {
+      id: generateId(),
+      slabId,
+      slabNo: slab.slabNo,
+      sourceType,
+      sourceRecordId,
+      reInspectionResult,
+      disposalStatus: 'pending',
+      reworkCount: 0,
+      records: [],
+      createdAt: getCurrentTime(),
+    };
+
+    set((s) => ({
+      qualityDisposalRecords: [disposal, ...s.qualityDisposalRecords],
+      slabList: s.slabList.map((sl) =>
+        sl.id === slabId ? { ...sl, status: 'disposal_pending' } : sl
+      ),
+    }));
+    get()._persist();
+  },
+
+  addDisposalStep: (disposalId, step) => {
+    const disposal = get().qualityDisposalRecords.find((d) => d.id === disposalId);
+    if (!disposal) return;
+
+    const stepRecord: DisposalStepRecord = {
+      ...step,
+      id: generateId(),
+      timestamp: getCurrentTime(),
+    };
+
+    const newRecords = [stepRecord, ...disposal.records];
+    let newStatus: DisposalStatus = 'processing';
+    let newReworkCount = disposal.reworkCount;
+    let currentResult: DisposalResult | undefined = disposal.currentDisposalResult;
+    let slabNewStatus: Slab['status'] | undefined;
+    let finishedAt: string | undefined = disposal.finishedAt;
+
+    switch (step.disposalType) {
+      case 'rework':
+        newReworkCount = disposal.reworkCount + 1;
+        currentResult = 'rework';
+        slabNewStatus = 'recheck_pending'; // 返修后回到复检
+        break;
+      case 'concession':
+        currentResult = 'concession';
+        newStatus = 'finished';
+        slabNewStatus = 'cleaned'; // 让步接收 -> 放行到入库候选
+        finishedAt = getCurrentTime();
+        break;
+      case 'scrapped':
+        currentResult = 'scrapped';
+        newStatus = 'finished';
+        slabNewStatus = 'scrapped';
+        finishedAt = getCurrentTime();
+        break;
+      case 'released':
+        currentResult = 'released';
+        newStatus = 'finished';
+        slabNewStatus = 'cleaned'; // 放行 -> 入库候选
+        finishedAt = getCurrentTime();
+        break;
+    }
+
+    set((s) => ({
+      qualityDisposalRecords: s.qualityDisposalRecords.map((d) =>
+        d.id === disposalId
+          ? {
+              ...d,
+              records: newRecords,
+              disposalStatus: newStatus,
+              reworkCount: newReworkCount,
+              currentDisposalResult: currentResult,
+              finishedAt,
+            }
+          : d
+      ),
+      slabList: s.slabList.map((sl) =>
+        sl.id === disposal.slabId && slabNewStatus ? { ...sl, status: slabNewStatus } : sl
+      ),
+    }));
+    get()._persist();
+  },
+
+  getDisposalBySlab: (slabId) => {
+    return get().qualityDisposalRecords.find((d) => d.slabId === slabId);
+  },
+
+  // ===== Outbound Plans =====
+  createOutboundPlan: (plan) => {
+    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const existingCount = get().outboundPlans.filter((p) => p.createdAt.slice(0, 10) === new Date().toISOString().slice(0, 10)).length + 1;
+    const newPlanNo = plan.planNo || `OUT-${dateStr}-${String(existingCount).padStart(4, '0')}`;
+
+    const newPlan: OutboundPlan = {
+      ...plan,
+      id: generateId(),
+      planNo: newPlanNo,
+      status: 'draft',
+      items: [],
+      createdAt: getCurrentTime(),
+    };
+
+    set((s) => ({ outboundPlans: [newPlan, ...s.outboundPlans] }));
+    get()._persist();
+    return newPlan.id;
+  },
+
+  updateOutboundPlan: (planId, patch) => {
+    set((s) => ({
+      outboundPlans: s.outboundPlans.map((p) =>
+        p.id === planId ? { ...p, ...patch } : p
+      ),
+    }));
+    get()._persist();
+  },
+
+  addPlanItems: (planId, items) => {
+    const plan = get().outboundPlans.find((p) => p.id === planId);
+    if (!plan) return;
+
+    // Prevent adding slabs already in this plan
+    const existingSlabIds = new Set(plan.items.map((i) => i.slabId));
+    const newItems: OutboundPlanItem[] = items
+      .filter((it) => !existingSlabIds.has(it.slabId))
+      .map((it) => ({ ...it, id: generateId(), status: 'pending' }));
+
+    if (newItems.length === 0) return;
+
+    set((s) => ({
+      outboundPlans: s.outboundPlans.map((p) =>
+        p.id === planId
+          ? { ...p, items: [...p.items, ...newItems] }
+          : p
+      ),
+    }));
+    get()._persist();
+  },
+
+  removePlanItem: (planId, itemId) => {
+    set((s) => ({
+      outboundPlans: s.outboundPlans.map((p) =>
+        p.id === planId
+          ? { ...p, items: p.items.filter((i) => i.id !== itemId) }
+          : p
+      ),
+    }));
+    get()._persist();
+  },
+
+  executePlanItemOutbound: (planId, itemId, operator, remark) => {
+    const plan = get().outboundPlans.find((p) => p.id === planId);
+    if (!plan) return;
+    const item = plan.items.find((i) => i.id === itemId);
+    if (!item || item.status === 'outbound') return;
+
+    // Execute actual outbound (reuse outboundSlab logic)
+    const slab = get().slabList.find((s) => s.id === item.slabId);
+    if (!slab || !slab.position) return;
+
+    const now = getCurrentTime();
+
+    const outbound: OutboundRecord = {
+      id: generateId(),
+      slabId: item.slabId,
+      slabNo: item.slabNo,
+      position: slab.position,
+      destination: plan.destination,
+      transporter: plan.transporter || item.outboundOperator || '未指定',
+      operator,
+      outboundTime: now,
+      remark,
+    };
+
+    const transfer: WarehouseTransferRecord = {
+      id: generateId(),
+      slabId: item.slabId,
+      slabNo: item.slabNo,
+      transferType: 'outbound',
+      fromPosition: slab.position,
+      toPosition: '',
+      operator,
+      reason: plan.destination,
+      transferTime: now,
+    };
+
+    set((s) => ({
+      outboundRecords: [outbound, ...s.outboundRecords],
+      warehouseTransferRecords: [transfer, ...s.warehouseTransferRecords],
+      slabList: s.slabList.map((sl) =>
+        sl.id === item.slabId ? { ...sl, status: 'outbound', position: undefined } : sl
+      ),
+      outboundPlans: s.outboundPlans.map((p) =>
+        p.id === planId
+          ? {
+              ...p,
+              items: p.items.map((i) =>
+                i.id === itemId
+                  ? {
+                      ...i,
+                      status: 'outbound',
+                      outboundAt: now,
+                      outboundOperator: operator,
+                      outboundRemark: remark,
+                    }
+                  : i
+              ),
+            }
+          : p
+      ),
+    }));
+    get()._persist();
+  },
+
+  completeOutboundPlan: (planId) => {
+    const plan = get().outboundPlans.find((p) => p.id === planId);
+    if (!plan) return;
+    if (plan.items.length === 0 || !plan.items.every((i) => i.status === 'outbound')) return;
+
+    set((s) => ({
+      outboundPlans: s.outboundPlans.map((p) =>
+        p.id === planId ? { ...p, status: 'completed', completedAt: getCurrentTime() } : p
+      ),
+    }));
+    get()._persist();
+  },
+
+  cancelOutboundPlan: (planId) => {
+    const plan = get().outboundPlans.find((p) => p.id === planId);
+    if (!plan) return;
+    if (plan.items.some((i) => i.status === 'outbound')) return; // 已执行部分出库的不能取消
+
+    set((s) => ({
+      outboundPlans: s.outboundPlans.map((p) =>
+        p.id === planId ? { ...p, status: 'cancelled', cancelledAt: getCurrentTime() } : p
+      ),
+    }));
+    get()._persist();
   },
 
   // ===== Real-time simulation =====

@@ -9,6 +9,7 @@ import {
   FileText,
   X,
   AlertCircle,
+  History,
 } from 'lucide-react';
 import StatusBadge from '@/components/Status/StatusBadge';
 import AlertPanel from '@/components/Status/AlertPanel';
@@ -60,6 +61,9 @@ export default function WarehousePage() {
   // Slot detail modal
   const [detailSlabId, setDetailSlabId] = useState<string | null>(null);
   const [detailAction, setDetailAction] = useState<DetailAction>('info');
+
+  // Outbound history modal (只读)
+  const [historySlabId, setHistorySlabId] = useState<string | null>(null);
 
   // Transfer form
   const [transferToPosition, setTransferToPosition] = useState('');
@@ -174,6 +178,13 @@ export default function WarehousePage() {
   const detailHistory: WarehouseHistoryItem[] = detailSlabId
     ? getSlabWarehouseHistory(detailSlabId)
     : [];
+  const historySlab = historySlabId ? slabList.find((s) => s.id === historySlabId) : null;
+  const historyTimeline: WarehouseHistoryItem[] = historySlabId
+    ? getSlabWarehouseHistory(historySlabId)
+    : [];
+  const historyOutboundRec = historySlabId
+    ? outboundRecords.find((r) => r.slabId === historySlabId)
+    : null;
 
   // ============== Actions ==============
   const handleWarehouse = () => {
@@ -847,6 +858,7 @@ export default function WarehousePage() {
                       <th className="table-header text-left px-3 py-2 text-xs">原库位</th>
                       <th className="table-header text-left px-3 py-2 text-xs">目的地</th>
                       <th className="table-header text-left px-3 py-2 text-xs">出库时间</th>
+                      <th className="table-header text-left px-3 py-2 text-xs w-24">操作</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -869,6 +881,15 @@ export default function WarehousePage() {
                         </td>
                         <td className="table-cell px-3 py-2 text-[10px] text-steel-400">
                           {rec.outboundTime}
+                        </td>
+                        <td className="table-cell px-3 py-2">
+                          <button
+                            onClick={() => setHistorySlabId(rec.slabId)}
+                            className="text-xs px-2 py-1 rounded bg-industrial-500/20 text-industrial-400 hover:bg-industrial-500/30 transition-colors inline-flex items-center gap-1"
+                          >
+                            <History className="w-3 h-3" />
+                            查看轨迹
+                          </button>
                         </td>
                       </tr>
                     ))}
@@ -894,6 +915,96 @@ export default function WarehousePage() {
           <AlertPanel moduleFilter="warehouse" showAll maxItems={5} />
         </div>
       </div>
+
+      {/* ============== Outbound History Modal (只读) ============== */}
+      {historySlabId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="card-industrial w-full max-w-xl max-h-[85vh] overflow-hidden flex flex-col">
+            <div className="card-header">
+              <h2 className="card-title flex items-center gap-2">
+                <History className="w-4 h-4 text-industrial-500" />
+                板坯库位轨迹
+                {historySlab && (
+                  <span className="font-mono text-industrial-400 text-sm">
+                    {historySlab.slabNo}
+                  </span>
+                )}
+              </h2>
+              <button
+                onClick={() => setHistorySlabId(null)}
+                className="p-1 rounded hover:bg-steel-700 transition-colors text-steel-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 overflow-y-auto flex-1 space-y-5">
+              {historySlab && (
+                <div className="bg-steel-800/60 border border-steel-700 rounded-lg p-4">
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+                    <div>
+                      <p className="text-xs text-steel-500 mb-0.5">板坯号</p>
+                      <p className="font-mono text-white font-bold">{historySlab.slabNo}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-steel-500 mb-0.5">钢种</p>
+                      <p className="text-white">{historySlab.steelGrade}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-steel-500 mb-0.5">尺寸 (W×T×L)</p>
+                      <p className="font-mono text-white text-xs">
+                        {historySlab.width}×{historySlab.thickness}×{historySlab.length}mm
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {historyOutboundRec && (
+                <div className="bg-orange-500/5 border border-orange-500/20 rounded-lg p-4">
+                  <p className="text-xs text-orange-400 mb-2 font-semibold flex items-center gap-1.5">
+                    <Truck className="w-3.5 h-3.5" />
+                    出库信息
+                  </p>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                    <div className="flex justify-between py-0.5 border-b border-steel-700/30 md:border-0 md:block">
+                      <span className="text-steel-500">原库位：</span>
+                      <span className="text-industrial-400 font-mono">{historyOutboundRec.position}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5 border-b border-steel-700/30 md:border-0 md:block">
+                      <span className="text-steel-500">目的地：</span>
+                      <span className="text-orange-400">{historyOutboundRec.destination}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5 border-b border-steel-700/30 md:border-0 md:block">
+                      <span className="text-steel-500">运输：</span>
+                      <span className="text-white">{historyOutboundRec.transporter}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5 md:border-0 md:block">
+                      <span className="text-steel-500">操作人：</span>
+                      <span className="text-white">{historyOutboundRec.operator}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Timeline */}
+              <div>
+                <p className="text-xs text-industrial-400 mb-3 flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5" />
+                  库位时间线（{historyTimeline.length} 条记录）
+                </p>
+                {renderHistoryTimeline(historyTimeline)}
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-steel-700/50 bg-steel-800/30">
+              <button onClick={() => setHistorySlabId(null)} className="btn-primary w-full">
+                关闭
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ============== Slot / Slab Detail Modal ============== */}
       {detailSlab && (

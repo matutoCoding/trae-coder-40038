@@ -16,12 +16,16 @@ import {
   Menu,
   X,
   GitBranch,
+  AlertTriangle,
+  Truck,
 } from 'lucide-react';
 import { useProductionStore } from '@/store/useProductionStore';
 
 const navItems = [
   { path: '/', label: '总览仪表盘', icon: LayoutDashboard },
   { path: '/tracing', label: '浇次跟踪', icon: GitBranch },
+  { path: '/quality-disposal', label: '质量处置', icon: AlertTriangle },
+  { path: '/outbound-plan', label: '出库计划', icon: Truck },
   { path: '/ladle', label: '钢包接收', icon: Flame },
   { path: '/tundish', label: '中间包浇铸', icon: Beaker },
   { path: '/mold', label: '结晶器', icon: Droplets },

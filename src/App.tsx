@@ -9,6 +9,8 @@ import SecondaryCoolingPage from '@/pages/SecondaryCooling';
 import CuttingPage from '@/pages/Cutting';
 import CleaningPage from '@/pages/Cleaning';
 import WarehousePage from '@/pages/Warehouse';
+import QualityDisposalPage from '@/pages/QualityDisposal';
+import OutboundPlanPage from '@/pages/OutboundPlan';
 
 export default function App() {
   return (
@@ -24,6 +26,8 @@ export default function App() {
           <Route path="/cutting" element={<CuttingPage />} />
           <Route path="/cleaning" element={<CleaningPage />} />
           <Route path="/warehouse" element={<WarehousePage />} />
+          <Route path="/quality-disposal" element={<QualityDisposalPage />} />
+          <Route path="/outbound-plan" element={<OutboundPlanPage />} />
         </Route>
       </Routes>
     </Router>

@@ -1,4 +1,5 @@
-import { AlertTriangle, AlertCircle, Info, CheckCircle2 } from 'lucide-react';
+import { useState } from 'react';
+import { AlertTriangle, AlertCircle, Info, CheckCircle2, X } from 'lucide-react';
 import type { Alert, AlertModule, AlertLevel } from '@/types';
 import { useProductionStore } from '@/store/useProductionStore';
 
@@ -50,8 +51,36 @@ export default function AlertPanel({
   compact = false,
 }: AlertPanelProps) {
   const { alerts, resolveAlert } = useProductionStore();
+  const [modalOpen, setModalOpen] = useState(false);
+  const [currentAlert, setCurrentAlert] = useState<Alert | null>(null);
+  const [resolvedBy, setResolvedBy] = useState('');
+  const [resolvedRemark, setResolvedRemark] = useState('');
 
-  // Step 1: filter by module
+  const openResolveModal = (alert: Alert) => {
+    setCurrentAlert(alert);
+    setResolvedBy('');
+    setResolvedRemark('');
+    setModalOpen(true);
+  };
+
+  const closeModal = () => {
+    setModalOpen(false);
+    setCurrentAlert(null);
+    setResolvedBy('');
+    setResolvedRemark('');
+  };
+
+  const handleConfirm = () => {
+    if (currentAlert) {
+      resolveAlert(
+        currentAlert.id,
+        resolvedBy.trim() || undefined,
+        resolvedRemark.trim() || undefined
+      );
+      closeModal();
+    }
+  };
+
   const moduleFiltered = alerts.filter((a) => {
     if (moduleFilter) {
       return a.module === moduleFilter;
@@ -59,7 +88,6 @@ export default function AlertPanel({
     return true;
   });
 
-  // Step 2: filter by resolved status (showAll means include resolved)
   const list = showAll ? moduleFiltered : moduleFiltered.filter((a) => !a.resolved);
   const displayList = list.slice(0, maxItems);
 
@@ -73,49 +101,118 @@ export default function AlertPanel({
   }
 
   return (
-    <div className={`space-y-1 ${compact ? '' : 'space-y-1.5'}`}>
-      {displayList.map((alert) => (
-        <div
-          key={alert.id}
-          className={`flex items-start gap-3 p-3 rounded-lg bg-steel-800/40 hover:bg-steel-800/70 transition-colors ${getAlertBorder(
-            alert.level,
-            alert.resolved
-          )} ${compact ? 'py-2 px-3' : ''}`}
-        >
-          <div className="pt-0.5">{getAlertIcon(alert.level)}</div>
-          <div className="flex-1 min-w-0">
-            <p
-              className={`text-white ${
-                alert.resolved ? 'opacity-60 line-through' : ''
-              } ${compact ? 'text-xs' : 'text-sm'}`}
-            >
-              {alert.message}
-            </p>
-            <p className={`text-steel-500 mt-0.5 ${compact ? 'text-[10px]' : 'text-xs'}`}>
-              {moduleLabels[alert.module] || alert.module} · {alert.time}
-              {alert.resolved && alert.resolvedTime && (
-                <span className="ml-2 text-green-500/70">
-                  已处理 ({alert.resolvedBy} · {alert.resolvedTime})
-                </span>
+    <>
+      <div className={`space-y-1 ${compact ? '' : 'space-y-1.5'}`}>
+        {displayList.map((alert) => (
+          <div
+            key={alert.id}
+            className={`flex items-start gap-3 p-3 rounded-lg bg-steel-800/40 hover:bg-steel-800/70 transition-colors ${getAlertBorder(
+              alert.level,
+              alert.resolved
+            )} ${compact ? 'py-2 px-3' : ''}`}
+          >
+            <div className="pt-0.5">{getAlertIcon(alert.level)}</div>
+            <div className="flex-1 min-w-0">
+              <p
+                className={`text-white ${
+                  alert.resolved ? 'opacity-60 line-through' : ''
+                } ${compact ? 'text-xs' : 'text-sm'}`}
+              >
+                {alert.message}
+              </p>
+              <p className={`text-steel-500 mt-0.5 ${compact ? 'text-[10px]' : 'text-xs'}`}>
+                {moduleLabels[alert.module] || alert.module} · {alert.time}
+                {alert.resolved && alert.resolvedTime && (
+                  <span className="ml-2 text-green-500/70">
+                    已处理 ({alert.resolvedBy} · {alert.resolvedTime})
+                  </span>
+                )}
+              </p>
+              {alert.resolved && alert.resolvedRemark && (
+                <p className="text-steel-400 text-xs mt-1 break-words">
+                  {alert.resolvedRemark}
+                </p>
               )}
-            </p>
+            </div>
+            {!alert.resolved && (
+              <button
+                onClick={() => openResolveModal(alert)}
+                title="标记已处理"
+                className="flex-shrink-0 p-1.5 rounded hover:bg-steel-700 text-steel-400 hover:text-green-400 transition-colors"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+              </button>
+            )}
           </div>
-          {!alert.resolved && (
-            <button
-              onClick={() => resolveAlert(alert.id)}
-              title="标记已处理"
-              className="flex-shrink-0 p-1.5 rounded hover:bg-steel-700 text-steel-400 hover:text-green-400 transition-colors"
-            >
-              <CheckCircle2 className="w-4 h-4" />
-            </button>
-          )}
+        ))}
+        {list.length > maxItems && (
+          <p className="text-center text-xs text-steel-500 pt-1">
+            还有 {list.length - maxItems} 条告警...
+          </p>
+        )}
+      </div>
+
+      {modalOpen && currentAlert && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={closeModal}
+          />
+          <div className="relative w-full max-w-md bg-steel-800 rounded-xl border border-steel-700 shadow-2xl">
+            <div className="flex items-center justify-between p-4 border-b border-steel-700">
+              <h3 className="text-base font-semibold text-white">处理告警</h3>
+              <button
+                onClick={closeModal}
+                className="p-1 rounded text-steel-400 hover:text-white hover:bg-steel-700 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              <div className="p-3 rounded-lg bg-steel-900/50 space-y-1">
+                <p className="text-sm text-white">{currentAlert.message}</p>
+                <p className="text-xs text-steel-500">
+                  {moduleLabels[currentAlert.module] || currentAlert.module} · {currentAlert.time}
+                </p>
+              </div>
+              <div>
+                <label className="block text-xs text-steel-400 mb-1.5">处理人</label>
+                <input
+                  type="text"
+                  value={resolvedBy}
+                  onChange={(e) => setResolvedBy(e.target.value)}
+                  placeholder="留空使用默认值"
+                  className="w-full px-3 py-2 text-sm bg-steel-900 border border-steel-700 rounded-lg text-white placeholder-steel-500 focus:outline-none focus:border-steel-500 focus:ring-1 focus:ring-steel-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-steel-400 mb-1.5">处理说明</label>
+                <textarea
+                  value={resolvedRemark}
+                  onChange={(e) => setResolvedRemark(e.target.value)}
+                  placeholder="请输入处理说明（可选）"
+                  rows={3}
+                  className="w-full px-3 py-2 text-sm bg-steel-900 border border-steel-700 rounded-lg text-white placeholder-steel-500 focus:outline-none focus:border-steel-500 focus:ring-1 focus:ring-steel-500 resize-none"
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 p-4 border-t border-steel-700">
+              <button
+                onClick={closeModal}
+                className="px-4 py-2 text-sm rounded-lg text-steel-300 bg-steel-700 hover:bg-steel-600 transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleConfirm}
+                className="px-4 py-2 text-sm rounded-lg text-white bg-green-600 hover:bg-green-500 transition-colors"
+              >
+                确认处理
+              </button>
+            </div>
+          </div>
         </div>
-      ))}
-      {list.length > maxItems && (
-        <p className="text-center text-xs text-steel-500 pt-1">
-          还有 {list.length - maxItems} 条告警...
-        </p>
       )}
-    </div>
+    </>
   );
 }

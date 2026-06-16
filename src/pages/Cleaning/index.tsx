@@ -54,7 +54,7 @@ export default function CleaningPage() {
 
   // ---- Re-inspection Form State ----
   const [recheckSlabId, setRecheckSlabId] = useState('');
-  const [inspectionResult, setInspectionResult] = useState<'qualified' | 'repaired' | 'recheck' | 'scrap'>('qualified');
+  const [inspectionResult, setInspectionResult] = useState<'qualified' | 'repaired' | 'recheck' | 'scrap' | 'downgrade'>('qualified');
   const [inspector, setInspector] = useState('质检-王工');
   const [recheckRemark, setRecheckRemark] = useState('');
 
@@ -174,6 +174,7 @@ export default function CleaningPage() {
     { value: 'qualified', label: '合格放行', color: 'bg-green-500' },
     { value: 'repaired', label: '修磨后合格', color: 'bg-blue-500' },
     { value: 'recheck', label: '再次复检', color: 'bg-yellow-500' },
+    { value: 'downgrade', label: '降级', color: 'bg-orange-500' },
     { value: 'scrap', label: '判废', color: 'bg-red-500' },
   ];
 
@@ -718,6 +719,8 @@ export default function CleaningPage() {
                                         ? 'bg-blue-500'
                                         : r.inspectionResult === 'recheck'
                                         ? 'bg-yellow-500'
+                                        : r.inspectionResult === 'downgrade'
+                                        ? 'bg-orange-500'
                                         : 'bg-red-500'
                                     }`}
                                   >
@@ -876,6 +879,8 @@ export default function CleaningPage() {
                                 ? 'bg-blue-500'
                                 : r.inspectionResult === 'recheck'
                                 ? 'bg-yellow-500'
+                                : r.inspectionResult === 'downgrade'
+                                ? 'bg-orange-500'
                                 : 'bg-red-500'
                             }`}
                           >
