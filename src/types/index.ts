@@ -156,6 +156,7 @@ export interface ReInspectionRecord {
   inspector: string;
   remark: string;
   recheckTime: string;
+  disposalId?: string;
 }
 
 export type TransferType = 'inbound' | 'shift' | 'outbound';
@@ -210,12 +211,34 @@ export interface QualityDisposalRecord {
 
 export interface DisposalStepRecord {
   id: string;
-  disposalType: 'rework' | 'concession' | 'scrapped' | 'released';
+  disposalType: 'rework' | 'concession' | 'scrapped' | 'released' | 'recheck_passed';
   operator: string;
   remark: string;
   beforeStatus?: SlabStatus;
   afterStatus?: SlabStatus;
   timestamp: string;
+  reInspectionRecordId?: string;
+  reInspectionResult?: 'qualified' | 'repaired' | 'recheck' | 'scrap' | 'downgrade';
+}
+
+// ====== 新增：装车批次 ======
+export type LoadingBatchStatus = 'pending' | 'loading' | 'completed';
+
+export interface LoadingBatch {
+  id: string;
+  planId: string;
+  planNo: string;
+  batchNo: string;
+  destination: string;
+  planDate: string;
+  bayNo?: string;
+  transporter?: string;
+  operator?: string;
+  status: LoadingBatchStatus;
+  itemIds: string[];
+  remark?: string;
+  createdAt: string;
+  completedAt?: string;
 }
 
 // ====== 新增：出库计划 ======

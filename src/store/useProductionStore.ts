@@ -27,6 +27,8 @@ import type {
   OutboundPlanItem,
   DisposalStatus,
   OutboundPlanStatus,
+  LoadingBatch,
+  LoadingBatchStatus,
 } from '@/types';
 import {
   mockLadleList,
@@ -70,6 +72,7 @@ interface PersistedState {
   outboundRecords: OutboundRecord[];
   qualityDisposalRecords: QualityDisposalRecord[];
   outboundPlans: OutboundPlan[];
+  loadingBatches: LoadingBatch[];
   tundish: Tundish;
   mold: Mold;
   secondaryCoolingZones: SecondaryCoolingZone[];
@@ -117,6 +120,7 @@ interface ProductionState {
   outboundRecords: OutboundRecord[];
   qualityDisposalRecords: QualityDisposalRecord[];
   outboundPlans: OutboundPlan[];
+  loadingBatches: LoadingBatch[];
 
   // UI state (not persisted)
   productionStats: ProductionStats;
@@ -195,6 +199,13 @@ interface ProductionState {
   completeOutboundPlan: (planId: string) => void;
   cancelOutboundPlan: (planId: string) => void;
 
+  // Loading Batches
+  createLoadingBatch: (planId: string, batch: Partial<LoadingBatch> & { itemIds: string[]; batchNo?: string }) => string;
+  removeLoadingBatch: (batchId: string) => void;
+  addItemsToLoadingBatch: (batchId: string, itemIds: string[]) => void;
+  removeItemsFromLoadingBatch: (batchId: string, itemIds: string[]) => void;
+  completeLoadingBatch: (batchId: string, operator?: string) => void;
+
   // Real-time simulation
   updateRealTimeData: () => void;
 
@@ -217,6 +228,7 @@ export const useProductionStore = create<ProductionState>((set, get) => ({
   outboundRecords: stored?.outboundRecords ?? [],
   qualityDisposalRecords: stored?.qualityDisposalRecords ?? [],
   outboundPlans: stored?.outboundPlans ?? [],
+  loadingBatches: stored?.loadingBatches ?? [],
 
   productionStats: mockProductionStats,
   temperatureHistory: mockTemperatureHistory,
@@ -242,6 +254,7 @@ export const useProductionStore = create<ProductionState>((set, get) => ({
       outboundRecords: s.outboundRecords,
       qualityDisposalRecords: s.qualityDisposalRecords,
       outboundPlans: s.outboundPlans,
+      loadingBatches: s.loadingBatches,
       castingSpeed: s.castingSpeed,
     });
   },
@@ -387,26 +400,68 @@ export const useProductionStore = create<ProductionState>((set, get) => ({
       let newStatus: Slab['status'] = 'recheck_pending';
       if (record.inspectionResult === 'qualified' || record.inspectionResult === 'repaired') {
         newStatus = 'cleaned';
+
+        // ===== 处置-复检联动：合格/修磨后自动回写处置台账 =====
+        const targetDisposalId = record.disposalId || get().qualityDisposalRecords.find(
+          (d) => d.slabId === record.slabId && d.disposalStatus !== 'finished'
+        )?.id;
+
+        if (targetDisposalId) {
+          const disposal = get().qualityDisposalRecords.find((d) => d.id === targetDisposalId);
+          if (disposal) {
+            const stepRecord: DisposalStepRecord = {
+              id: generateId(),
+              disposalType: 'recheck_passed',
+              operator: record.inspector,
+              remark: `复检${record.inspectionResult === 'qualified' ? '合格' : '修磨后合格'}，自动放行入库候选`,
+              timestamp: getCurrentTime(),
+              reInspectionRecordId: newRecord.id,
+              reInspectionResult: record.inspectionResult,
+              beforeStatus: 'recheck_pending',
+              afterStatus: newStatus,
+            };
+            set((s) => ({
+              qualityDisposalRecords: s.qualityDisposalRecords.map((d) =>
+                d.id === targetDisposalId
+                  ? {
+                      ...d,
+                      records: [stepRecord, ...d.records],
+                      disposalStatus: 'finished' as DisposalStatus,
+                      currentDisposalResult: 'released',
+                      finishedAt: getCurrentTime(),
+                    }
+                  : d
+              ),
+            }));
+          }
+        }
       } else if (record.inspectionResult === 'scrap' || record.inspectionResult === 'downgrade') {
         newStatus = 'disposal_pending';
-        // Auto-create quality disposal record
-        const slab = get().slabList.find((s) => s.id === record.slabId);
-        if (slab) {
-          const disposal: QualityDisposalRecord = {
-            id: generateId(),
-            slabId: slab.id,
-            slabNo: slab.slabNo,
-            sourceType: record.inspectionResult === 'scrap' ? 'recheck_scrap' : 'recheck_downgrade',
-            sourceRecordId: newRecord.id,
-            reInspectionResult: record.inspectionResult,
-            disposalStatus: 'pending',
-            reworkCount: 0,
-            records: [],
-            createdAt: getCurrentTime(),
-          };
-          set((s) => ({
-            qualityDisposalRecords: [disposal, ...s.qualityDisposalRecords],
-          }));
+        // 如果这条复检记录已经关联了处置，则不用重复创建
+        if (!record.disposalId) {
+          const existingOpen = get().qualityDisposalRecords.find(
+            (d) => d.slabId === record.slabId && d.disposalStatus !== 'finished'
+          );
+          if (!existingOpen) {
+            const slab = get().slabList.find((s) => s.id === record.slabId);
+            if (slab) {
+              const disposal: QualityDisposalRecord = {
+                id: generateId(),
+                slabId: slab.id,
+                slabNo: slab.slabNo,
+                sourceType: record.inspectionResult === 'scrap' ? 'recheck_scrap' : 'recheck_downgrade',
+                sourceRecordId: newRecord.id,
+                reInspectionResult: record.inspectionResult,
+                disposalStatus: 'pending',
+                reworkCount: 0,
+                records: [],
+                createdAt: getCurrentTime(),
+              };
+              set((s) => ({
+                qualityDisposalRecords: [disposal, ...s.qualityDisposalRecords],
+              }));
+            }
+          }
         }
       }
       set((s) => ({
@@ -791,12 +846,12 @@ export const useProductionStore = create<ProductionState>((set, get) => ({
       case 'rework':
         newReworkCount = disposal.reworkCount + 1;
         currentResult = 'rework';
-        slabNewStatus = 'recheck_pending'; // 返修后回到复检
+        slabNewStatus = 'recheck_pending';
         break;
       case 'concession':
         currentResult = 'concession';
         newStatus = 'finished';
-        slabNewStatus = 'cleaned'; // 让步接收 -> 放行到入库候选
+        slabNewStatus = 'cleaned';
         finishedAt = getCurrentTime();
         break;
       case 'scrapped':
@@ -808,7 +863,13 @@ export const useProductionStore = create<ProductionState>((set, get) => ({
       case 'released':
         currentResult = 'released';
         newStatus = 'finished';
-        slabNewStatus = 'cleaned'; // 放行 -> 入库候选
+        slabNewStatus = 'cleaned';
+        finishedAt = getCurrentTime();
+        break;
+      case 'recheck_passed':
+        currentResult = 'released';
+        newStatus = 'finished';
+        slabNewStatus = 'cleaned';
         finishedAt = getCurrentTime();
         break;
     }
@@ -979,11 +1040,127 @@ export const useProductionStore = create<ProductionState>((set, get) => ({
   cancelOutboundPlan: (planId) => {
     const plan = get().outboundPlans.find((p) => p.id === planId);
     if (!plan) return;
-    if (plan.items.some((i) => i.status === 'outbound')) return; // 已执行部分出库的不能取消
+    if (plan.items.some((i) => i.status === 'outbound')) return;
 
     set((s) => ({
       outboundPlans: s.outboundPlans.map((p) =>
         p.id === planId ? { ...p, status: 'cancelled', cancelledAt: getCurrentTime() } : p
+      ),
+    }));
+    get()._persist();
+  },
+
+  // ===== Loading Batches =====
+  createLoadingBatch: (planId, batch) => {
+    const plan = get().outboundPlans.find((p) => p.id === planId);
+    if (!plan) return '';
+
+    // Auto generate batch no
+    const planDate = plan.planDate.replace(/-/g, '');
+    const existingInPlan = get().loadingBatches.filter((b) => b.planId === planId).length + 1;
+    const newBatchNo =
+      batch.batchNo ||
+      `${plan.planNo}-B${String(existingInPlan).padStart(2, '0')}`;
+
+    // Validate itemIds belong to this plan and aren't already in another batch
+    const plannedItemIds = new Set(plan.items.map((i) => i.id));
+    const usedItemIds = new Set<string>();
+    get().loadingBatches.forEach((b) => {
+      if (b.status !== 'completed') b.itemIds.forEach((id) => usedItemIds.add(id));
+    });
+    const validItemIds = batch.itemIds.filter(
+      (id) => plannedItemIds.has(id) && !usedItemIds.has(id)
+    );
+    if (validItemIds.length === 0) return '';
+
+    const newBatch: LoadingBatch = {
+      id: generateId(),
+      planId,
+      planNo: plan.planNo,
+      batchNo: newBatchNo,
+      destination: batch.destination || plan.destination,
+      planDate: batch.planDate || plan.planDate,
+      bayNo: batch.bayNo,
+      transporter: batch.transporter || plan.transporter,
+      operator: batch.operator,
+      status: 'pending',
+      itemIds: validItemIds,
+      remark: batch.remark,
+      createdAt: getCurrentTime(),
+    };
+
+    set((s) => ({ loadingBatches: [newBatch, ...s.loadingBatches] }));
+    get()._persist();
+    return newBatch.id;
+  },
+
+  removeLoadingBatch: (batchId) => {
+    const batch = get().loadingBatches.find((b) => b.id === batchId);
+    if (!batch || batch.status === 'completed') return;
+
+    set((s) => ({
+      loadingBatches: s.loadingBatches.filter((b) => b.id !== batchId),
+    }));
+    get()._persist();
+  },
+
+  addItemsToLoadingBatch: (batchId, itemIds) => {
+    const batch = get().loadingBatches.find((b) => b.id === batchId);
+    if (!batch || batch.status === 'completed') return;
+
+    const plan = get().outboundPlans.find((p) => p.id === batch.planId);
+    if (!plan) return;
+
+    const plannedItemIds = new Set(plan.items.map((i) => i.id));
+    const usedItemIds = new Set<string>();
+    get().loadingBatches.forEach((b) => {
+      if (b.id !== batchId && b.status !== 'completed')
+        b.itemIds.forEach((id) => usedItemIds.add(id));
+    });
+    const existing = new Set(batch.itemIds);
+    const toAdd = itemIds.filter(
+      (id) => plannedItemIds.has(id) && !usedItemIds.has(id) && !existing.has(id)
+    );
+    if (toAdd.length === 0) return;
+
+    set((s) => ({
+      loadingBatches: s.loadingBatches.map((b) =>
+        b.id === batchId ? { ...b, itemIds: [...b.itemIds, ...toAdd] } : b
+      ),
+    }));
+    get()._persist();
+  },
+
+  removeItemsFromLoadingBatch: (batchId, itemIds) => {
+    const batch = get().loadingBatches.find((b) => b.id === batchId);
+    if (!batch || batch.status === 'completed') return;
+
+    const removeSet = new Set(itemIds);
+    set((s) => ({
+      loadingBatches: s.loadingBatches.map((b) =>
+        b.id === batchId
+          ? { ...b, itemIds: b.itemIds.filter((id) => !removeSet.has(id)) }
+          : b
+      ),
+    }));
+    get()._persist();
+  },
+
+  completeLoadingBatch: (batchId, operator) => {
+    const batch = get().loadingBatches.find((b) => b.id === batchId);
+    if (!batch || batch.status === 'completed') return;
+    // Ensure all items already outbound
+    const plan = get().outboundPlans.find((p) => p.id === batch.planId);
+    if (!plan) return;
+    const itemMap = new Map(plan.items.map((i) => [i.id, i]));
+    const allOutbound = batch.itemIds.every((id) => itemMap.get(id)?.status === 'outbound');
+    if (!allOutbound) return;
+
+    set((s) => ({
+      loadingBatches: s.loadingBatches.map((b) =>
+        b.id === batchId
+          ? { ...b, status: 'completed', completedAt: getCurrentTime(), operator: operator || b.operator }
+          : b
       ),
     }));
     get()._persist();

@@ -27,11 +27,17 @@ import {
   Square as SquareIcon,
   Weight,
   Ruler,
+  Boxes,
+  CheckCircle2 as CheckCircle,
+  Tag,
+  ListChecks,
+  Map as MapIcon,
+  BarChart3,
 } from 'lucide-react';
 import StatusBadge from '@/components/Status/StatusBadge';
 import AlertPanel from '@/components/Status/AlertPanel';
 import { useProductionStore } from '@/store/useProductionStore';
-import type { OutboundPlan, OutboundPlanItem, Slab, OutboundPlanStatus } from '@/types';
+import type { OutboundPlan, OutboundPlanItem, Slab, OutboundPlanStatus, LoadingBatch, LoadingBatchStatus } from '@/types';
 
 const planStatusLabels: Record<OutboundPlanStatus, { text: string; status: 'success' | 'warning' | 'danger' | 'pending' | 'running' }> = {
   draft: { text: '草稿', status: 'pending' },
@@ -40,6 +46,23 @@ const planStatusLabels: Record<OutboundPlanStatus, { text: string; status: 'succ
   completed: { text: '已完成', status: 'success' },
   cancelled: { text: '已取消', status: 'danger' },
 };
+
+const batchStatusLabels: Record<LoadingBatchStatus, { text: string; status: 'success' | 'warning' | 'danger' | 'pending' | 'running' }> = {
+  pending: { text: '待执行', status: 'pending' },
+  loading: { text: '装车中', status: 'running' },
+  completed: { text: '已完成', status: 'success' },
+};
+
+const bayNoOptions = [
+  { value: 'A1', label: 'A1 装车位' },
+  { value: 'B1', label: 'B1 装车位' },
+  { value: 'C1', label: 'C1 装车位' },
+  { value: 'D1', label: 'D1 装车位' },
+  { value: 'A2', label: 'A2 装车位' },
+  { value: 'B2', label: 'B2 装车位' },
+  { value: 'C2', label: 'C2 装车位' },
+  { value: 'D2', label: 'D2 装车位' },
+];
 
 const transporterOptions = [
   { value: '天车-01', label: '天车-01' },
@@ -69,7 +92,7 @@ const todayStr = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
-type DetailTab = 'info' | 'slab' | 'execute';
+type DetailTab = 'info' | 'slab' | 'execute' | 'batch';
 
 export default function OutboundPlanPage() {
   const {
@@ -82,6 +105,12 @@ export default function OutboundPlanPage() {
     executePlanItemOutbound,
     completeOutboundPlan,
     cancelOutboundPlan,
+    loadingBatches,
+    createLoadingBatch,
+    removeLoadingBatch,
+    addItemsToLoadingBatch,
+    removeItemsFromLoadingBatch,
+    completeLoadingBatch,
   } = useProductionStore();
 
   // ===== Filters =====
@@ -120,6 +149,25 @@ export default function OutboundPlanPage() {
   const [executeOpId, setExecuteOpId] = useState('');
   const [executeOperator, setExecuteOperator] = useState('出库-赵工');
   const [executeRemark, setExecuteRemark] = useState('');
+
+  // ===== Loading Batch: create modal =====
+  const [showCreateBatchModal, setShowCreateBatchModal] = useState(false);
+  const [createBatchNo, setCreateBatchNo] = useState('');
+  const [createBatchBayNo, setCreateBatchBayNo] = useState('');
+  const [createBatchTransporter, setCreateBatchTransporter] = useState('');
+  const [createBatchOperator, setCreateBatchOperator] = useState('装车-李工');
+  const [createBatchRemark, setCreateBatchRemark] = useState('');
+  const [createBatchSelectedItemIds, setCreateBatchSelectedItemIds] = useState<string[]>([]);
+  const [createBatchZoneFilter, setCreateBatchZoneFilter] = useState<string>('');
+
+  // ===== Loading Batch: edit items modal =====
+  const [showEditBatchModal, setShowEditBatchModal] = useState<string | null>(null);
+  const [editBatchSelectedItemIds, setEditBatchSelectedItemIds] = useState<string[]>([]);
+  const [editBatchZoneFilter, setEditBatchZoneFilter] = useState<string>('');
+
+  // ===== Loading Batch: editable fields =====
+  const [editingBatchId, setEditingBatchId] = useState<string | null>(null);
+  const [editingBatchOperator, setEditingBatchOperator] = useState('');
 
   // ===== Derived: stats =====
   const stats = useMemo(() => {
@@ -210,6 +258,59 @@ export default function OutboundPlanPage() {
     return list;
   }, [slabList, outboundPlans, detailPlan, selectedSlabIds, slabSearchQuery]);
 
+  // ===== Derived: current plan loading batches =====
+  const planBatches = useMemo(() => {
+    if (!detailPlan) return [];
+    return loadingBatches.filter((b) => b.planId === detailPlan.id);
+  }, [loadingBatches, detailPlan]);
+
+  // ===== Derived: batch statistics =====
+  const batchStats = useMemo(() => {
+    const total = planBatches.length;
+    const completed = planBatches.filter((b) => b.status === 'completed').length;
+    const pending = total - completed;
+    let totalItems = 0;
+    let completedItems = 0;
+    planBatches.forEach((b) => {
+      totalItems += b.itemIds.length;
+      if (detailPlan) {
+        const itemMap = new Map(detailPlan.items.map((i) => [i.id, i]));
+        b.itemIds.forEach((id) => {
+          const it = itemMap.get(id);
+          if (it && it.status === 'outbound') completedItems++;
+        });
+      }
+    });
+    const progress = totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 0;
+    return { total, completed, pending, progress };
+  }, [planBatches, detailPlan]);
+
+  // ===== Derived: items available for batch (pending, not in other unfinished batches) =====
+  const availableItemsForBatch = useMemo(() => {
+    if (!detailPlan) return [];
+    const usedItemIds = new Set<string>();
+    loadingBatches.forEach((b) => {
+      if (b.status !== 'completed') {
+        b.itemIds.forEach((id) => usedItemIds.add(id));
+      }
+    });
+    return detailPlan.items.filter(
+      (i) => i.status === 'pending' && !usedItemIds.has(i.id)
+    );
+  }, [detailPlan, loadingBatches]);
+
+  // ===== Derived: unique zones (position.slice(0,2)) for current plan items =====
+  const uniqueZones = useMemo(() => {
+    if (!detailPlan) return [] as string[];
+    const set = new Set<string>();
+    detailPlan.items.forEach((i) => {
+      if (i.position && i.position.length >= 2) {
+        set.add(i.position.slice(0, 2));
+      }
+    });
+    return Array.from(set).sort();
+  }, [detailPlan]);
+
   // ===== Open detail & init state =====
   const openDetail = (plan: OutboundPlan) => {
     setDetailPlanId(plan.id);
@@ -226,6 +327,9 @@ export default function OutboundPlanPage() {
     setExecuteOpId('');
     setExecuteOperator('出库-赵工');
     setExecuteRemark('');
+    setShowCreateBatchModal(false);
+    setShowEditBatchModal(null);
+    setEditingBatchId(null);
   };
 
   // ===== Create plan =====
@@ -347,6 +451,178 @@ export default function OutboundPlanPage() {
     if (confirm('确定要取消该出库计划吗？')) {
       cancelOutboundPlan(detailPlanId);
     }
+  };
+
+  // ===== Open create batch modal =====
+  const openCreateBatchModal = () => {
+    if (!detailPlan) return;
+    const planDate = detailPlan.planDate.replace(/-/g, '');
+    const existingCount = planBatches.length + 1;
+    setCreateBatchNo(`${detailPlan.planNo}-B${String(existingCount).padStart(2, '0')}`);
+    setCreateBatchBayNo('');
+    setCreateBatchTransporter(detailPlan.transporter || '');
+    setCreateBatchOperator('装车-李工');
+    setCreateBatchRemark('');
+    setCreateBatchSelectedItemIds([]);
+    setCreateBatchZoneFilter('');
+    setShowCreateBatchModal(true);
+  };
+
+  // ===== Handle create batch =====
+  const handleCreateBatch = () => {
+    if (!detailPlanId || createBatchSelectedItemIds.length === 0) return;
+    createLoadingBatch(detailPlanId, {
+      itemIds: createBatchSelectedItemIds,
+      batchNo: createBatchNo || undefined,
+      bayNo: createBatchBayNo || undefined,
+      transporter: createBatchTransporter || undefined,
+      operator: createBatchOperator || undefined,
+      remark: createBatchRemark || undefined,
+    });
+    setShowCreateBatchModal(false);
+  };
+
+  // ===== Toggle create batch item =====
+  const toggleCreateBatchItem = (itemId: string) => {
+    setCreateBatchSelectedItemIds((prev) =>
+      prev.includes(itemId) ? prev.filter((x) => x !== itemId) : [...prev, itemId]
+    );
+  };
+
+  // ===== Open edit batch items modal =====
+  const openEditBatchModal = (batch: LoadingBatch) => {
+    setShowEditBatchModal(batch.id);
+    setEditBatchSelectedItemIds([...batch.itemIds]);
+    setEditBatchZoneFilter('');
+  };
+
+  // ===== Toggle edit batch item =====
+  const toggleEditBatchItem = (itemId: string, isCurrentBatch: boolean) => {
+    setEditBatchSelectedItemIds((prev) => {
+      if (prev.includes(itemId)) {
+        return prev.filter((x) => x !== itemId);
+      }
+      return [...prev, itemId];
+    });
+  };
+
+  // ===== Save edit batch items =====
+  const handleSaveEditBatchItems = () => {
+    if (!detailPlan || !showEditBatchModal) return;
+    const batch = loadingBatches.find((b) => b.id === showEditBatchModal);
+    if (!batch) return;
+    const currentSet = new Set<string>(batch.itemIds);
+    const newSet = new Set<string>(editBatchSelectedItemIds);
+    const toAdd: string[] = [];
+    const toRemove: string[] = [];
+    newSet.forEach((id) => {
+      if (!currentSet.has(id)) toAdd.push(id);
+    });
+    currentSet.forEach((id) => {
+      if (!newSet.has(id)) toRemove.push(id);
+    });
+    if (toAdd.length > 0) addItemsToLoadingBatch(batch.id, toAdd);
+    if (toRemove.length > 0) removeItemsFromLoadingBatch(batch.id, toRemove);
+    setShowEditBatchModal(null);
+  };
+
+  // ===== Complete batch =====
+  const handleCompleteBatch = (batchId: string) => {
+    const batch = loadingBatches.find((b) => b.id === batchId);
+    if (!batch || !detailPlan) return;
+    const itemMap = new Map(detailPlan.items.map((i) => [i.id, i]));
+    const allOutbound = batch.itemIds.every((id) => itemMap.get(id)?.status === 'outbound');
+    if (!allOutbound) {
+      alert('该批次还有板坯未完成出库，不能标记完成');
+      return;
+    }
+    if (confirm('确定标记该批次为已完成吗？')) {
+      completeLoadingBatch(batchId);
+    }
+  };
+
+  // ===== Remove batch =====
+  const handleRemoveBatch = (batchId: string) => {
+    if (confirm('确定删除该批次吗？批次中的板坯将重新变为可选状态。')) {
+      removeLoadingBatch(batchId);
+    }
+  };
+
+  // ===== Start editing batch operator =====
+  const startEditBatchOperator = (batch: LoadingBatch) => {
+    setEditingBatchId(batch.id);
+    setEditingBatchOperator(batch.operator || '');
+  };
+
+  // ===== Save batch operator =====
+  const saveBatchOperator = (batchId: string) => {
+    const batch = loadingBatches.find((b) => b.id === batchId);
+    if (!batch) return;
+    // Update via patch on LoadingBatch - note store doesn't expose a full update,
+    // but we can workaround by updating the persisted loadingBatches using patch pattern
+    // For simplicity here we leverage createLoadingBatch idempotency is not ideal,
+    // so instead we update batch locally using private _persist pattern via store's internal
+    // Since no direct update method exists, we use direct state update approach below:
+    const currentState = useProductionStore.getState();
+    const updated = currentState.loadingBatches.map((b) =>
+      b.id === batchId ? { ...b, operator: editingBatchOperator || undefined } : b
+    );
+    (useProductionStore as unknown as { setState: (p: Partial<typeof currentState>) => void }).setState({
+      loadingBatches: updated,
+    });
+    currentState._persist();
+    setEditingBatchId(null);
+  };
+
+  // ===== Derived helpers for batch =====
+  const getBatchItems = (batch: LoadingBatch): OutboundPlanItem[] => {
+    if (!detailPlan) return [];
+    const itemMap = new Map(detailPlan.items.map((i) => [i.id, i]));
+    return batch.itemIds.map((id) => itemMap.get(id)).filter(Boolean) as OutboundPlanItem[];
+  };
+
+  const getBatchPositionDistribution = (batch: LoadingBatch) => {
+    const items = getBatchItems(batch);
+    const dist: Record<string, number> = {};
+    items.forEach((it) => {
+      const zone = it.position && it.position.length >= 2 ? it.position.slice(0, 2) : '未知';
+      dist[zone] = (dist[zone] || 0) + 1;
+    });
+    return Object.entries(dist).sort((a, b) => a[0].localeCompare(b[0]));
+  };
+
+  const getBatchProgress = (batch: LoadingBatch) => {
+    const items = getBatchItems(batch);
+    const total = items.length;
+    const outbound = items.filter((i) => i.status === 'outbound').length;
+    const pending = total - outbound;
+    const totalWeight = items.reduce((s, i) => s + i.weight, 0);
+    const progress = total > 0 ? Math.round((outbound / total) * 100) : 0;
+    return { total, outbound, pending, totalWeight, progress };
+  };
+
+  const getEditBatchAvailableItems = (batchId: string) => {
+    if (!detailPlan) return [];
+    const batch = loadingBatches.find((b) => b.id === batchId);
+    if (!batch) return [];
+    const usedItemIds = new Set<string>();
+    loadingBatches.forEach((b) => {
+      if (b.id !== batchId && b.status !== 'completed') {
+        b.itemIds.forEach((id) => usedItemIds.add(id));
+      }
+    });
+    // Items in current batch (regardless of status) OR pending items not used elsewhere
+    return detailPlan.items.filter((i) => {
+      const inCurrentBatch = batch.itemIds.includes(i.id);
+      const available = i.status === 'pending' && !usedItemIds.has(i.id);
+      return inCurrentBatch || available;
+    });
+  };
+
+  const canCompleteBatch = (batch: LoadingBatch): boolean => {
+    if (!detailPlan) return false;
+    const itemMap = new Map(detailPlan.items.map((i) => [i.id, i]));
+    return batch.itemIds.length > 0 && batch.itemIds.every((id) => itemMap.get(id)?.status === 'outbound');
   };
 
   // ===== All outbound done? =====
@@ -728,7 +1004,13 @@ export default function OutboundPlanPage() {
                   size="sm"
                 />
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <TabButton
+                  active={detailTab === 'batch'}
+                  onClick={() => setDetailTab('batch')}
+                  icon={<Boxes className="w-3.5 h-3.5" />}
+                  label={`装车批次 (${planBatches.length})`}
+                />
                 {detailPlan.status === 'draft' && (
                   <>
                     <button
@@ -785,7 +1067,7 @@ export default function OutboundPlanPage() {
             </div>
 
             {/* ===== Tabs ===== */}
-            <div className="flex gap-1 px-4 pt-3 border-b border-steel-700/50">
+            <div className="flex gap-1 px-4 pt-3 border-b border-steel-700/50 flex-wrap">
               <TabButton
                 active={detailTab === 'info'}
                 onClick={() => setDetailTab('info')}
@@ -808,6 +1090,12 @@ export default function OutboundPlanPage() {
                   label={`执行出库 (${detailPlan.items.filter((i) => i.status === 'outbound').length}/${detailPlan.items.length})`}
                 />
               )}
+              <TabButton
+                active={detailTab === 'batch'}
+                onClick={() => setDetailTab('batch')}
+                icon={<Boxes className="w-3.5 h-3.5" />}
+                label={`装车批次 (${planBatches.length})`}
+              />
             </div>
 
             {/* ===== Tab Content ===== */}
@@ -1504,10 +1792,888 @@ export default function OutboundPlanPage() {
                   </div>
                 </div>
               )}
+
+              {/* ===== Tab 4: Loading Batches ===== */}
+              {detailTab === 'batch' && (
+                <div className="space-y-4">
+                  {/* Batch Statistics Bar */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="bg-steel-800/40 border border-steel-700 rounded-lg p-3 text-center">
+                      <p className="text-xs text-steel-400 mb-1 flex items-center justify-center gap-1">
+                        <Boxes className="w-3 h-3" />
+                        批次数量
+                      </p>
+                      <p className="text-xl font-mono font-bold text-white">{batchStats.total}</p>
+                    </div>
+                    <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3 text-center">
+                      <p className="text-xs text-green-400 mb-1 flex items-center justify-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" />
+                        已完成批次
+                      </p>
+                      <p className="text-xl font-mono font-bold text-green-400">{batchStats.completed}</p>
+                    </div>
+                    <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 text-center">
+                      <p className="text-xs text-yellow-400 mb-1 flex items-center justify-center gap-1">
+                        <Clock className="w-3 h-3" />
+                        待执行批次
+                      </p>
+                      <p className="text-xl font-mono font-bold text-yellow-400">{batchStats.pending}</p>
+                    </div>
+                    <div className="bg-industrial-500/10 border border-industrial-500/30 rounded-lg p-3 text-center">
+                      <p className="text-xs text-industrial-400 mb-1 flex items-center justify-center gap-1">
+                        <BarChart3 className="w-3 h-3" />
+                        总体装车进度
+                      </p>
+                      <p className="text-xl font-mono font-bold text-industrial-400">{batchStats.progress}%</p>
+                      <div className="h-1.5 bg-steel-800 rounded-full mt-2 overflow-hidden">
+                        <div
+                          className="h-full bg-gradient-to-r from-industrial-500 to-green-500"
+                          style={{ width: `${batchStats.progress}%` }}
+                        ></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Action Bar */}
+                  <div className="flex flex-wrap items-center justify-between bg-steel-800/50 border border-steel-700 rounded-lg p-3 gap-3">
+                    <div>
+                      <p className="text-xs text-industrial-400 font-semibold flex items-center gap-1">
+                        <ListChecks className="w-4 h-4" />
+                        装车批次列表
+                      </p>
+                      <p className="text-[10px] text-steel-500 mt-0.5">
+                        按批次组织板坯装车，支持按跨区快速选择
+                      </p>
+                    </div>
+                    <button
+                      onClick={openCreateBatchModal}
+                      className="btn-primary !py-1.5 !px-3 !text-xs flex items-center gap-1"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      新建批次
+                    </button>
+                  </div>
+
+                  {/* Batch Cards */}
+                  {planBatches.length === 0 ? (
+                    <div className="card-industrial p-12 text-center text-steel-500">
+                      <Boxes className="w-12 h-12 mx-auto mb-3 opacity-40" />
+                      <p>暂无装车批次</p>
+                      <p className="text-xs mt-1">点击上方「新建批次」创建装车批次</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {planBatches.map((batch) => {
+                        const items = getBatchItems(batch);
+                        const dist = getBatchPositionDistribution(batch);
+                        const prog = getBatchProgress(batch);
+                        const canEdit = batch.status !== 'completed';
+                        const isEditingOperator = editingBatchId === batch.id;
+                        return (
+                          <div
+                            key={batch.id}
+                            className={`card-industrial overflow-hidden transition-colors ${
+                              batch.status === 'completed' ? 'opacity-80' : ''
+                            }`}
+                          >
+                            {/* Card Header */}
+                            <div className="card-header flex-wrap gap-2">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <Tag className="w-4 h-4 text-industrial-500 flex-shrink-0" />
+                                <span className="font-mono font-semibold text-white truncate">
+                                  {batch.batchNo}
+                                </span>
+                                <StatusBadge
+                                  status={batchStatusLabels[batch.status].status}
+                                  text={batchStatusLabels[batch.status].text}
+                                  size="sm"
+                                />
+                              </div>
+                              <div className="flex items-center gap-1 ml-auto">
+                                {canEdit && (
+                                  <>
+                                    <button
+                                      onClick={() => handleRemoveBatch(batch.id)}
+                                      className="p-1.5 rounded text-red-400 hover:bg-red-500/20 hover:text-red-300 transition-colors"
+                                      title="删除批次"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </>
+                                )}
+                                <button
+                                  onClick={() => handleCompleteBatch(batch.id)}
+                                  disabled={!canCompleteBatch(batch)}
+                                  className={`!py-1 !px-3 !text-xs flex items-center gap-1 ${
+                                    canCompleteBatch(batch)
+                                      ? 'btn-primary'
+                                      : 'btn-secondary opacity-50 cursor-not-allowed'
+                                  }`}
+                                  title={
+                                    !canCompleteBatch(batch)
+                                      ? '所有板坯均完成出库后方可标记完成'
+                                      : ''
+                                  }
+                                >
+                                  <CheckCircle className="w-3.5 h-3.5" />
+                                  完成
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Card Body - 3 columns */}
+                            <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+                              {/* Col 1: Slab list */}
+                              <div>
+                                <p className="text-xs text-industrial-400 font-semibold mb-2 flex items-center gap-1">
+                                  <Package className="w-3.5 h-3.5" />
+                                  板坯清单 ({items.length} 块 / {prog.totalWeight.toFixed(2)}t)
+                                </p>
+                                <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto">
+                                  {items.length === 0 ? (
+                                    <span className="text-xs text-steel-500">无板坯</span>
+                                  ) : (
+                                    items.map((it) => (
+                                      <span
+                                        key={it.id}
+                                        className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono ${
+                                          it.status === 'outbound'
+                                            ? 'bg-green-500/20 text-green-300 border border-green-500/30'
+                                            : 'bg-steel-700/50 text-steel-200 border border-steel-600/50'
+                                        }`}
+                                        title={`${it.position} | ${it.steelGrade} | ${it.weight.toFixed(2)}t`}
+                                      >
+                                        {it.slabNo}
+                                      </span>
+                                    ))
+                                  )}
+                                </div>
+                                {canEdit && (
+                                  <button
+                                    onClick={() => openEditBatchModal(batch)}
+                                    className="mt-2 btn-secondary !py-1 !px-2 !text-[10px] flex items-center gap-0.5"
+                                  >
+                                    <Edit3 className="w-3 h-3" />
+                                    编辑板坯
+                                  </button>
+                                )}
+                              </div>
+
+                              {/* Col 2: Position distribution */}
+                              <div>
+                                <p className="text-xs text-industrial-400 font-semibold mb-2 flex items-center gap-1">
+                                  <MapIcon className="w-3.5 h-3.5" />
+                                  库位分布
+                                </p>
+                                <div className="space-y-1.5">
+                                  {dist.length === 0 ? (
+                                    <span className="text-xs text-steel-500">无数据</span>
+                                  ) : (
+                                    dist.map(([zone, count]) => (
+                                      <div
+                                        key={zone}
+                                        className="flex items-center justify-between bg-steel-800/50 border border-steel-700 rounded px-2 py-1.5"
+                                      >
+                                        <span className="text-xs font-mono text-industrial-400">
+                                          {zone} 跨
+                                        </span>
+                                        <span className="text-xs text-white font-mono">
+                                          × {count} 块
+                                        </span>
+                                      </div>
+                                    ))
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Col 3: Execution progress */}
+                              <div>
+                                <p className="text-xs text-industrial-400 font-semibold mb-2 flex items-center gap-1">
+                                  <BarChart3 className="w-3.5 h-3.5" />
+                                  执行进度
+                                </p>
+                                <div className="space-y-2">
+                                  <div className="flex items-center justify-between text-xs">
+                                    <span className="text-yellow-400">待出库 {prog.pending} 块</span>
+                                    <span className="text-industrial-400 font-mono">
+                                      {prog.progress}%
+                                    </span>
+                                    <span className="text-green-400">已出库 {prog.outbound} 块</span>
+                                  </div>
+                                  <div className="h-2 bg-steel-800 rounded-full overflow-hidden">
+                                    <div
+                                      className="h-full bg-gradient-to-r from-industrial-500 to-green-500 transition-all"
+                                      style={{ width: `${prog.progress}%` }}
+                                    ></div>
+                                  </div>
+                                  <div className="flex items-center justify-between text-xs pt-1">
+                                    <span className="text-steel-500">总重</span>
+                                    <span className="text-white font-mono flex items-center gap-1">
+                                      <Weight className="w-3 h-3 text-industrial-400" />
+                                      {prog.totalWeight.toFixed(2)} t
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Card Footer */}
+                            <div className="border-t border-steel-700/50 p-3 bg-steel-800/30 grid grid-cols-2 md:grid-cols-5 gap-3 text-xs">
+                              <div>
+                                <p className="text-steel-500 mb-0.5 flex items-center gap-1">
+                                  <Calendar className="w-3 h-3" />
+                                  装车日期
+                                </p>
+                                <p className="text-white font-mono">{batch.planDate || detailPlan.planDate}</p>
+                              </div>
+                              <div>
+                                <p className="text-steel-500 mb-0.5 flex items-center gap-1">
+                                  <Truck className="w-3 h-3" />
+                                  运输方式
+                                </p>
+                                <p className="text-white">{batch.transporter || '未指定'}</p>
+                              </div>
+                              <div>
+                                <p className="text-steel-500 mb-0.5 flex items-center gap-1">
+                                  <MapPin className="w-3 h-3" />
+                                  装车位
+                                </p>
+                                <p className="text-white font-mono">{batch.bayNo || '未分配'}</p>
+                              </div>
+                              <div>
+                                <p className="text-steel-500 mb-0.5 flex items-center gap-1">
+                                  <User className="w-3 h-3" />
+                                  操作人
+                                </p>
+                                {canEdit && isEditingOperator ? (
+                                  <div className="flex items-center gap-1">
+                                    <input
+                                      type="text"
+                                      value={editingBatchOperator}
+                                      onChange={(e) => setEditingBatchOperator(e.target.value)}
+                                      className="input-field !py-1 !px-2 !text-xs flex-1 min-w-0"
+                                      autoFocus
+                                    />
+                                    <button
+                                      onClick={() => saveBatchOperator(batch.id)}
+                                      className="p-1 text-green-400 hover:bg-green-500/20 rounded"
+                                      title="保存"
+                                    >
+                                      <Save className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      onClick={() => setEditingBatchId(null)}
+                                      className="p-1 text-steel-400 hover:bg-steel-700 rounded"
+                                      title="取消"
+                                    >
+                                      <X className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-white truncate">
+                                      {batch.operator || '未指派'}
+                                    </span>
+                                    {canEdit && (
+                                      <button
+                                        onClick={() => startEditBatchOperator(batch)}
+                                        className="p-0.5 text-steel-400 hover:text-industrial-400 hover:bg-steel-700 rounded"
+                                        title="编辑操作人"
+                                      >
+                                        <Edit3 className="w-3 h-3" />
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                              <div className="md:col-span-1 col-span-2">
+                                <p className="text-steel-500 mb-0.5 flex items-center gap-1">
+                                  <FileText className="w-3 h-3" />
+                                  备注
+                                </p>
+                                <p className="text-steel-300 truncate">
+                                  {batch.remark || '无'}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>
       )}
+
+      {/* ===== Create Loading Batch Modal ===== */}
+      {showCreateBatchModal && detailPlan && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="card-industrial w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="card-header">
+              <h3 className="text-base font-semibold text-white flex items-center gap-2">
+                <Plus className="w-4 h-4 text-industrial-500" />
+                新建装车批次
+              </h3>
+              <button
+                onClick={() => setShowCreateBatchModal(false)}
+                className="p-1 rounded hover:bg-steel-700 transition-colors text-steel-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-4 space-y-4 overflow-y-auto flex-1">
+              {/* Batch info fields */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs text-steel-400 mb-1.5 flex items-center gap-1">
+                    <Tag className="w-3 h-3" />
+                    批次号（可修改）
+                  </label>
+                  <input
+                    type="text"
+                    value={createBatchNo}
+                    onChange={(e) => setCreateBatchNo(e.target.value)}
+                    className="input-field font-mono"
+                    placeholder="自动生成"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-steel-400 mb-1.5 flex items-center gap-1">
+                    <MapPin className="w-3 h-3" />
+                    装车位
+                  </label>
+                  <select
+                    value={createBatchBayNo}
+                    onChange={(e) => setCreateBatchBayNo(e.target.value)}
+                    className="input-field"
+                  >
+                    <option value="">请选择装车位</option>
+                    {bayNoOptions.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-steel-400 mb-1.5 flex items-center gap-1">
+                    <Truck className="w-3 h-3" />
+                    运输方式
+                  </label>
+                  <select
+                    value={createBatchTransporter}
+                    onChange={(e) => setCreateBatchTransporter(e.target.value)}
+                    className="input-field"
+                  >
+                    <option value="">请选择（默认继承计划）</option>
+                    {transporterOptions.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-steel-400 mb-1.5 flex items-center gap-1">
+                    <User className="w-3 h-3" />
+                    操作人
+                  </label>
+                  <input
+                    type="text"
+                    value={createBatchOperator}
+                    onChange={(e) => setCreateBatchOperator(e.target.value)}
+                    className="input-field"
+                    placeholder="请输入姓名"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs text-steel-400 mb-1.5 flex items-center gap-1">
+                  <FileText className="w-3 h-3" />
+                  备注
+                </label>
+                <textarea
+                  value={createBatchRemark}
+                  onChange={(e) => setCreateBatchRemark(e.target.value)}
+                  rows={2}
+                  className="input-field resize-none"
+                  placeholder="选填..."
+                />
+              </div>
+
+              {/* Item selection */}
+              <div className="bg-steel-800/40 border border-steel-700 rounded-lg overflow-hidden">
+                <div className="p-3 border-b border-steel-700/50 space-y-2">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <p className="text-xs text-industrial-400 font-semibold flex items-center gap-1">
+                      <ListChecks className="w-4 h-4" />
+                      选择板坯（仅显示 pending 状态且未被其他批次占用的板坯）
+                    </p>
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="text-steel-400">
+                        已选:{' '}
+                        <span className="text-industrial-400 font-mono">
+                          {createBatchSelectedItemIds.length}
+                        </span>{' '}
+                        块
+                      </span>
+                      {createBatchSelectedItemIds.length > 0 && (
+                        <span className="text-steel-400">
+                          预计总重:{' '}
+                          <span className="text-green-400 font-mono">
+                            {(
+                              (() => {
+                                const itemMap = new Map(
+                                  detailPlan.items.map((i) => [i.id, i])
+                                );
+                                return createBatchSelectedItemIds.reduce(
+                                  (s, id) =>
+                                    s + (itemMap.get(id)?.weight || 0),
+                                  0
+                                );
+                              })()
+                            ).toFixed(2)}{' '}
+                            t
+                          </span>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {/* Zone filter */}
+                  {uniqueZones.length > 0 && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[10px] text-steel-500">跨区筛选:</span>
+                      <button
+                        onClick={() => setCreateBatchZoneFilter('')}
+                        className={`px-2 py-0.5 rounded text-[10px] transition-colors ${
+                          createBatchZoneFilter === ''
+                            ? 'bg-industrial-500/30 text-industrial-300 border border-industrial-500/50'
+                            : 'bg-steel-700/50 text-steel-300 border border-steel-600/50 hover:bg-steel-700'
+                        }`}
+                      >
+                        全部
+                      </button>
+                      {uniqueZones.map((zone) => (
+                        <button
+                          key={zone}
+                          onClick={() => setCreateBatchZoneFilter(zone)}
+                          className={`px-2 py-0.5 rounded text-[10px] font-mono transition-colors ${
+                            createBatchZoneFilter === zone
+                              ? 'bg-industrial-500/30 text-industrial-300 border border-industrial-500/50'
+                              : 'bg-steel-700/50 text-steel-300 border border-steel-600/50 hover:bg-steel-700'
+                          }`}
+                        >
+                          {zone} 跨
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {availableItemsForBatch.length === 0 ? (
+                  <div className="text-center py-8 text-steel-500 text-sm">
+                    <Package className="w-8 h-8 mx-auto mb-2 opacity-40" />
+                    暂无可分配的板坯（均已分配至其他批次或已出库）
+                  </div>
+                ) : (
+                  <div className="max-h-72 overflow-y-auto">
+                    <table className="w-full">
+                      <thead className="sticky top-0 bg-steel-800 z-10">
+                        <tr className="border-b border-steel-700/50">
+                          <th className="table-header px-2 py-2 w-10 text-center">
+                            <button
+                              onClick={() => {
+                                const filtered = createBatchZoneFilter
+                                  ? availableItemsForBatch.filter((i) =>
+                                      i.position &&
+                                      i.position
+                                        .slice(0, 2) === createBatchZoneFilter
+                                    )
+                                  : availableItemsForBatch;
+                                const ids = filtered.map((i) => i.id);
+                                const allSelected =
+                                  ids.length > 0 &&
+                                  ids.every((id) =>
+                                    createBatchSelectedItemIds.includes(id)
+                                  );
+                                if (allSelected) {
+                                  setCreateBatchSelectedItemIds((prev) =>
+                                    prev.filter((x) => !ids.includes(x))
+                                  );
+                                } else {
+                                  const merged = new Set([
+                                    ...createBatchSelectedItemIds,
+                                    ...ids,
+                                  ]);
+                                  setCreateBatchSelectedItemIds(
+                                    Array.from(merged)
+                                  );
+                                }
+                              }}
+                              className="text-steel-400 hover:text-white"
+                            >
+                              {(() => {
+                                const filtered = createBatchZoneFilter
+                                  ? availableItemsForBatch.filter((i) =>
+                                      i.position &&
+                                      i.position
+                                        .slice(0, 2) === createBatchZoneFilter
+                                    )
+                                  : availableItemsForBatch;
+                                const allSelected =
+                                  filtered.length > 0 &&
+                                  filtered.every((i) =>
+                                    createBatchSelectedItemIds.includes(i.id)
+                                  );
+                                return allSelected ? (
+                                  <CheckSquare className="w-4 h-4 text-industrial-400 mx-auto" />
+                                ) : (
+                                  <SquareIcon className="w-4 h-4 mx-auto" />
+                                );
+                              })()}
+                            </button>
+                          </th>
+                          <th className="table-header text-left px-2 py-2 text-xs">板坯号</th>
+                          <th className="table-header text-left px-2 py-2 text-xs">库位</th>
+                          <th className="table-header text-left px-2 py-2 text-xs">钢种</th>
+                          <th className="table-header text-left px-2 py-2 text-xs">规格</th>
+                          <th className="table-header text-right px-2 py-2 text-xs">重量(t)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {availableItemsForBatch
+                          .filter((i) => {
+                            if (!createBatchZoneFilter) return true;
+                            return (
+                              i.position &&
+                              i.position.slice(0, 2) === createBatchZoneFilter
+                            );
+                          })
+                          .map((item) => {
+                            const checked = createBatchSelectedItemIds.includes(
+                              item.id
+                            );
+                            return (
+                              <tr
+                                key={item.id}
+                                className={`border-b border-steel-800/50 cursor-pointer transition-colors ${
+                                  checked
+                                    ? 'bg-industrial-900/30'
+                                    : 'hover:bg-steel-800/40'
+                                }`}
+                                onClick={() =>
+                                  toggleCreateBatchItem(item.id)
+                                }
+                              >
+                                <td className="table-cell px-2 py-2 text-center">
+                                  {checked ? (
+                                    <CheckSquare className="w-4 h-4 text-industrial-400 mx-auto" />
+                                  ) : (
+                                    <SquareIcon className="w-4 h-4 text-steel-500 mx-auto" />
+                                  )}
+                                </td>
+                                <td className="table-cell px-2 py-2 text-xs font-mono text-white">
+                                  {item.slabNo}
+                                </td>
+                                <td className="table-cell px-2 py-2 text-xs font-mono text-industrial-400">
+                                  {item.position}
+                                </td>
+                                <td className="table-cell px-2 py-2 text-xs text-steel-300">
+                                  {item.steelGrade}
+                                </td>
+                                <td className="table-cell px-2 py-2 text-xs font-mono text-steel-300">
+                                  {item.width}×{item.thickness}×{item.length}
+                                </td>
+                                <td className="table-cell px-2 py-2 text-xs font-mono text-white text-right">
+                                  {item.weight.toFixed(2)}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="card-header border-t flex justify-end gap-3">
+              <button
+                onClick={() => setShowCreateBatchModal(false)}
+                className="btn-secondary"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleCreateBatch}
+                disabled={createBatchSelectedItemIds.length === 0}
+                className="btn-primary disabled:opacity-50"
+              >
+                <Save className="w-4 h-4" />
+                确认创建批次 ({createBatchSelectedItemIds.length})
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== Edit Loading Batch Items Modal ===== */}
+      {showEditBatchModal && detailPlan && (() => {
+        const batch = loadingBatches.find((b) => b.id === showEditBatchModal);
+        if (!batch) return null;
+        const availableItems = getEditBatchAvailableItems(batch.id);
+        const selectedWeight = (() => {
+          const itemMap = new Map(detailPlan.items.map((i) => [i.id, i]));
+          return editBatchSelectedItemIds.reduce(
+            (s, id) => s + (itemMap.get(id)?.weight || 0),
+            0
+          );
+        })();
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+            <div className="card-industrial w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
+              <div className="card-header">
+                <h3 className="text-base font-semibold text-white flex items-center gap-2">
+                  <Edit3 className="w-4 h-4 text-industrial-500" />
+                  编辑批次板坯 - <span className="font-mono">{batch.batchNo}</span>
+                </h3>
+                <button
+                  onClick={() => setShowEditBatchModal(null)}
+                  className="p-1 rounded hover:bg-steel-700 transition-colors text-steel-400 hover:text-white"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="p-4 space-y-3 overflow-y-auto flex-1">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-steel-400">
+                      已选:{' '}
+                      <span className="text-industrial-400 font-mono">
+                        {editBatchSelectedItemIds.length}
+                      </span>{' '}
+                      块
+                    </span>
+                    <span className="text-steel-400">
+                      预计总重:{' '}
+                      <span className="text-green-400 font-mono">
+                        {selectedWeight.toFixed(2)} t
+                      </span>
+                    </span>
+                  </div>
+                  {uniqueZones.length > 0 && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[10px] text-steel-500">跨区筛选:</span>
+                      <button
+                        onClick={() => setEditBatchZoneFilter('')}
+                        className={`px-2 py-0.5 rounded text-[10px] transition-colors ${
+                          editBatchZoneFilter === ''
+                            ? 'bg-industrial-500/30 text-industrial-300 border border-industrial-500/50'
+                            : 'bg-steel-700/50 text-steel-300 border border-steel-600/50 hover:bg-steel-700'
+                        }`}
+                      >
+                        全部
+                      </button>
+                      {uniqueZones.map((zone) => (
+                        <button
+                          key={zone}
+                          onClick={() => setEditBatchZoneFilter(zone)}
+                          className={`px-2 py-0.5 rounded text-[10px] font-mono transition-colors ${
+                            editBatchZoneFilter === zone
+                              ? 'bg-industrial-500/30 text-industrial-300 border border-industrial-500/50'
+                              : 'bg-steel-700/50 text-steel-300 border border-steel-600/50 hover:bg-steel-700'
+                          }`}
+                        >
+                          {zone} 跨
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {availableItems.length === 0 ? (
+                  <div className="text-center py-8 text-steel-500 text-sm">
+                    无可选板坯
+                  </div>
+                ) : (
+                  <div className="max-h-80 overflow-y-auto border border-steel-700 rounded-lg">
+                    <table className="w-full">
+                      <thead className="sticky top-0 bg-steel-800 z-10">
+                        <tr className="border-b border-steel-700/50">
+                          <th className="table-header px-2 py-2 w-10 text-center">
+                            <button
+                              onClick={() => {
+                                const filtered = editBatchZoneFilter
+                                  ? availableItems.filter((i) =>
+                                      i.position &&
+                                      i.position
+                                        .slice(0, 2) === editBatchZoneFilter
+                                    )
+                                  : availableItems;
+                                const inBatchIds = filtered
+                                  .filter((i) => batch.itemIds.includes(i.id) || i.status !== 'pending')
+                                  .map((i) => i.id);
+                                const selectableIds = filtered
+                                  .filter((i) => !inBatchIds.includes(i.id) || batch.itemIds.includes(i.id))
+                                  .map((i) => i.id);
+                                const allSelected =
+                                  selectableIds.length > 0 &&
+                                  selectableIds.every((id) =>
+                                    editBatchSelectedItemIds.includes(id)
+                                  );
+                                if (allSelected) {
+                                  setEditBatchSelectedItemIds((prev) =>
+                                    prev.filter(
+                                      (x) => !selectableIds.includes(x)
+                                    )
+                                  );
+                                } else {
+                                  const merged = new Set([
+                                    ...editBatchSelectedItemIds,
+                                    ...selectableIds,
+                                  ]);
+                                  setEditBatchSelectedItemIds(
+                                    Array.from(merged)
+                                  );
+                                }
+                              }}
+                              className="text-steel-400 hover:text-white"
+                            >
+                              {(() => {
+                                const filtered = editBatchZoneFilter
+                                  ? availableItems.filter((i) =>
+                                      i.position &&
+                                      i.position
+                                        .slice(0, 2) === editBatchZoneFilter
+                                    )
+                                  : availableItems;
+                                const inBatchIds = filtered
+                                  .filter((i) => batch.itemIds.includes(i.id) || i.status !== 'pending')
+                                  .map((i) => i.id);
+                                const selectableIds = filtered
+                                  .filter((i) => !inBatchIds.includes(i.id) || batch.itemIds.includes(i.id))
+                                  .map((i) => i.id);
+                                const allSelected =
+                                  selectableIds.length > 0 &&
+                                  selectableIds.every((id) =>
+                                    editBatchSelectedItemIds.includes(id)
+                                  );
+                                return allSelected ? (
+                                  <CheckSquare className="w-4 h-4 text-industrial-400 mx-auto" />
+                                ) : (
+                                  <SquareIcon className="w-4 h-4 mx-auto" />
+                                );
+                              })()}
+                            </button>
+                          </th>
+                          <th className="table-header text-left px-2 py-2 text-xs">板坯号</th>
+                          <th className="table-header text-left px-2 py-2 text-xs">库位</th>
+                          <th className="table-header text-left px-2 py-2 text-xs">规格</th>
+                          <th className="table-header text-right px-2 py-2 text-xs">重量</th>
+                          <th className="table-header text-center px-2 py-2 text-xs">状态</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {availableItems
+                          .filter((i) => {
+                            if (!editBatchZoneFilter) return true;
+                            return (
+                              i.position &&
+                              i.position.slice(0, 2) === editBatchZoneFilter
+                            );
+                          })
+                          .map((item) => {
+                            const checked = editBatchSelectedItemIds.includes(
+                              item.id
+                            );
+                            const inCurrentBatch = batch.itemIds.includes(
+                              item.id
+                            );
+                            const canToggle =
+                              inCurrentBatch || item.status === 'pending';
+                            return (
+                              <tr
+                                key={item.id}
+                                className={`border-b border-steel-800/50 transition-colors ${
+                                  checked
+                                    ? 'bg-industrial-900/30'
+                                    : 'hover:bg-steel-800/40'
+                                } ${canToggle ? 'cursor-pointer' : 'opacity-60 cursor-not-allowed'}`}
+                                onClick={() =>
+                                  canToggle &&
+                                  toggleEditBatchItem(
+                                    item.id,
+                                    inCurrentBatch
+                                  )
+                                }
+                              >
+                                <td className="table-cell px-2 py-2 text-center">
+                                  {canToggle ? (
+                                    checked ? (
+                                      <CheckSquare className="w-4 h-4 text-industrial-400 mx-auto" />
+                                    ) : (
+                                      <SquareIcon className="w-4 h-4 text-steel-500 mx-auto" />
+                                    )
+                                  ) : (
+                                    <span className="text-steel-600 text-[10px]">
+                                      -
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="table-cell px-2 py-2 text-xs font-mono text-white">
+                                  {item.slabNo}
+                                </td>
+                                <td className="table-cell px-2 py-2 text-xs font-mono text-industrial-400">
+                                  {item.position}
+                                </td>
+                                <td className="table-cell px-2 py-2 text-xs font-mono text-steel-300">
+                                  {item.width}×{item.thickness}×{item.length}
+                                </td>
+                                <td className="table-cell px-2 py-2 text-xs font-mono text-white text-right">
+                                  {item.weight.toFixed(2)}
+                                </td>
+                                <td className="table-cell px-2 py-2 text-xs text-center">
+                                  <StatusBadge
+                                    status={
+                                      item.status === 'outbound'
+                                        ? 'success'
+                                        : 'pending'
+                                    }
+                                    text={
+                                      item.status === 'outbound'
+                                        ? '已出库'
+                                        : '待出库'
+                                    }
+                                    size="sm"
+                                  />
+                                </td>
+                              </tr>
+                            );
+                          })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+              <div className="card-header border-t flex justify-end gap-3">
+                <button
+                  onClick={() => setShowEditBatchModal(null)}
+                  className="btn-secondary"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={handleSaveEditBatchItems}
+                  className="btn-primary"
+                >
+                  <Save className="w-4 h-4" />
+                  保存修改
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

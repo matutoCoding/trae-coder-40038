@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Flame,
   Thermometer,
@@ -7,6 +7,10 @@ import {
   Clock,
   TrendingUp,
   ArrowRight,
+  AlertTriangle,
+  User,
+  FileText,
+  Layers,
 } from 'lucide-react';
 import StatCard from '@/components/Card/StatCard';
 import TrendChart from '@/components/Chart/TrendChart';
@@ -14,6 +18,7 @@ import StatusBadge from '@/components/Status/StatusBadge';
 import AlertPanel from '@/components/Status/AlertPanel';
 import { useProductionStore } from '@/store/useProductionStore';
 import { useNavigate } from 'react-router-dom';
+import type { AlertModule } from '@/types';
 
 const processSteps = [
   { key: 'ladle', label: '钢包接收', icon: Flame, path: '/ladle' },
@@ -24,6 +29,17 @@ const processSteps = [
   { key: 'cleaning', label: '表面清理', icon: CheckCircle2, path: '/cleaning' },
   { key: 'warehouse', label: '板坯入库', icon: Clock, path: '/warehouse' },
 ];
+
+const moduleLabels: Record<AlertModule, string> = {
+  dashboard: '总览',
+  ladle: '钢包接收',
+  tundish: '中间包浇铸',
+  mold: '结晶器',
+  cooling: '二冷拉矫',
+  cutting: '定尺切割',
+  cleaning: '表面清理',
+  warehouse: '板坯入库',
+};
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -39,6 +55,8 @@ export default function Dashboard() {
     updateRealTimeData,
   } = useProductionStore();
 
+  const [alertTab, setAlertTab] = useState<'unresolved' | 'resolved'>('unresolved');
+
   useEffect(() => {
     const interval = setInterval(() => {
       updateRealTimeData();
@@ -47,6 +65,9 @@ export default function Dashboard() {
   }, [updateRealTimeData]);
 
   const unresolvedAlerts = alerts.filter((a) => !a.resolved);
+  const resolvedAlerts = alerts
+    .filter((a) => a.resolved)
+    .slice(0, 20);
   const activeLadle = ladleList.find((l) => l.status === 'pouring');
   const processingSlabs = slabList.filter(
     (s) => s.status !== 'warehoused' && s.status !== 'pending_cut'
@@ -312,21 +333,136 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Alerts */}
+        {/* Alerts - Two Tabs */}
         <div className="card-industrial">
-          <div className="card-header">
-            <h2 className="card-title">告警信息</h2>
-            {unresolvedAlerts.length > 0 && (
-              <span className="text-xs px-2 py-0.5 bg-red-500/20 text-red-400 rounded-full">
-                {unresolvedAlerts.length} 未处理
-              </span>
-            )}
+          <div className="card-header flex-col items-stretch !py-3">
+            <div className="flex items-center justify-between w-full mb-3">
+              <h2 className="card-title">告警信息</h2>
+              {unresolvedAlerts.length > 0 && (
+                <span className="text-xs px-2 py-0.5 bg-red-500/20 text-red-400 rounded-full">
+                  {unresolvedAlerts.length} 未处理
+                </span>
+              )}
+            </div>
+            {/* Tab Switcher */}
+            <div className="flex gap-1 bg-steel-800/60 rounded-lg p-1">
+              <button
+                onClick={() => setAlertTab('unresolved')}
+                className={`flex-1 py-1.5 px-3 rounded-md text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${
+                  alertTab === 'unresolved'
+                    ? 'bg-industrial-500/20 text-industrial-300 border border-industrial-500/40 shadow-sm'
+                    : 'text-steel-400 hover:text-white hover:bg-steel-700/50'
+                }`}
+              >
+                <AlertTriangle className="w-3.5 h-3.5" />
+                未处理告警
+                {unresolvedAlerts.length > 0 && (
+                  <span className={`ml-1 px-1.5 rounded-full text-[10px] ${
+                    alertTab === 'unresolved'
+                      ? 'bg-industrial-500/40 text-white'
+                      : 'bg-red-500/20 text-red-400'
+                  }`}>
+                    {unresolvedAlerts.length}
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={() => setAlertTab('resolved')}
+                className={`flex-1 py-1.5 px-3 rounded-md text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${
+                  alertTab === 'resolved'
+                    ? 'bg-industrial-500/20 text-industrial-300 border border-industrial-500/40 shadow-sm'
+                    : 'text-steel-400 hover:text-white hover:bg-steel-700/50'
+                }`}
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                已处理记录
+                {resolvedAlerts.length > 0 && (
+                  <span className={`ml-1 px-1.5 rounded-full text-[10px] ${
+                    alertTab === 'resolved'
+                      ? 'bg-industrial-500/40 text-white'
+                      : 'bg-green-500/20 text-green-400'
+                  }`}>
+                    {resolvedAlerts.length}
+                  </span>
+                )}
+              </button>
+            </div>
           </div>
-          <div className="p-2 max-h-[260px] overflow-y-auto">
-            <AlertPanel maxItems={8} />
+
+          {/* Tab Content */}
+          <div className="p-2 max-h-[480px] overflow-y-auto">
+            {alertTab === 'unresolved' ? (
+              <AlertPanel showAll={false} maxItems={20} compact />
+            ) : (
+              <ResolvedAlertsList alerts={resolvedAlerts} />
+            )}
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function ResolvedAlertsList({ alerts }: { alerts: ReturnType<typeof Object['values']> }) {
+  if (alerts.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-8 text-steel-500">
+        <CheckCircle2 className="w-10 h-10 mb-2 text-green-500/50" />
+        <p className="text-sm">暂无已处理告警记录</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1.5">
+      {alerts.map((alert: any) => (
+        <div
+          key={alert.id}
+          className="flex items-start gap-3 p-3 rounded-lg bg-steel-800/40 border-l-2 border-l-green-600/60"
+        >
+          <div className="pt-0.5 flex-shrink-0">
+            <CheckCircle2 className="w-4 h-4 text-green-500/70" />
+          </div>
+          <div className="flex-1 min-w-0 space-y-1">
+            <p className="text-white text-sm line-through opacity-70">
+              {alert.message}
+            </p>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px]">
+              <span className="text-steel-500 flex items-center gap-1">
+                <Clock className="w-3 h-3" />
+                {alert.time}
+              </span>
+              <span className="px-1.5 py-0.5 rounded bg-steel-700/50 text-steel-300">
+                {moduleLabels[alert.module as AlertModule] || alert.module}
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] pt-1 border-t border-steel-700/30">
+              <span className="text-green-400/80 flex items-center gap-1">
+                <User className="w-3 h-3" />
+                {alert.resolvedBy || '系统'}
+              </span>
+              <span className="text-steel-500 flex items-center gap-1">
+                <Clock className="w-3 h-3" />
+                {alert.resolvedTime || '-'}
+              </span>
+            </div>
+            {alert.resolvedRemark && (
+              <p className="text-steel-400 text-xs break-words bg-steel-800/50 rounded px-2 py-1 border border-steel-700/30">
+                <span className="inline-flex items-center gap-1 text-steel-500 mr-1">
+                  <FileText className="w-3 h-3" />
+                  处理说明:
+                </span>
+                {alert.resolvedRemark}
+              </p>
+            )}
+          </div>
+        </div>
+      ))}
+      {alerts.length >= 20 && (
+        <p className="text-center text-xs text-steel-500 pt-1">
+          仅显示最近 20 条已处理记录
+        </p>
+      )}
     </div>
   );
 }

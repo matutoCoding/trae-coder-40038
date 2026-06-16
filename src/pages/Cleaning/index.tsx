@@ -8,11 +8,12 @@ import {
   Eye,
   RotateCcw,
   X,
+  FileText,
 } from 'lucide-react';
 import StatusBadge from '@/components/Status/StatusBadge';
 import AlertPanel from '@/components/Status/AlertPanel';
 import { useProductionStore } from '@/store/useProductionStore';
-import type { CleaningMethod, DefectType, CleaningResult, ReInspectionRecord } from '@/types';
+import type { CleaningMethod, DefectType, CleaningResult, ReInspectionRecord, QualityDisposalRecord } from '@/types';
 
 const defectOptions: { value: DefectType; label: string }[] = [
   { value: 'none', label: '无缺陷' },
@@ -32,6 +33,20 @@ const cleaningMethods: { value: CleaningMethod; label: string }[] = [
 
 type CleanTab = 'clean' | 'recheck' | 'history';
 
+const sourceTypeLabel: Record<QualityDisposalRecord['sourceType'], string> = {
+  recheck_scrap: '复检判废',
+  recheck_downgrade: '复检降级',
+  manual: '人工发起',
+};
+
+const getDisposalBadgeText = (d: QualityDisposalRecord): string => {
+  if (d.currentDisposalResult === 'rework' || d.records.some(r => r.disposalType === 'rework')) {
+    return `返修回检 #${d.id.slice(0, 5)}`;
+  }
+  const base = sourceTypeLabel[d.sourceType];
+  return `${base} #${d.id.slice(0, 5)}`;
+};
+
 export default function CleaningPage() {
   const {
     slabList,
@@ -39,6 +54,8 @@ export default function CleaningPage() {
     addCleaningRecord,
     reInspectionRecords,
     addReInspectionRecord,
+    qualityDisposalRecords,
+    getDisposalBySlab,
   } = useProductionStore();
 
   const [activeTab, setActiveTab] = useState<CleanTab>('clean');
@@ -85,11 +102,30 @@ export default function CleaningPage() {
     );
   }, [slabList, cleaningRecords]);
 
+  // 当前选中板坯的 open 处置记录
+  const currentDisposal = useMemo<QualityDisposalRecord | null>(() => {
+    return recheckSlabId
+      ? getDisposalBySlab(recheckSlabId) ||
+          qualityDisposalRecords.find(
+            (d) => d.slabId === recheckSlabId && d.disposalStatus !== 'finished'
+          ) ||
+          null
+      : null;
+  }, [recheckSlabId, getDisposalBySlab, qualityDisposalRecords]);
+
   const getCleaningRecordOfSlab = (slabId: string) =>
     cleaningRecords.find((r) => r.slabId === slabId);
 
   const getReInspectionsOfSlab = (slabId: string): ReInspectionRecord[] =>
     reInspectionRecords.filter((r) => r.slabId === slabId);
+
+  // 获取板坯 open 处置记录（用于下拉 badge）
+  const getOpenDisposalOfSlab = (slabId: string): QualityDisposalRecord | undefined => {
+    return (
+      getDisposalBySlab(slabId) ||
+      qualityDisposalRecords.find((d) => d.slabId === slabId && d.disposalStatus !== 'finished')
+    );
+  };
 
   // ============== Actions ==============
   const handleSubmitClean = () => {
@@ -139,6 +175,7 @@ export default function CleaningPage() {
       inspector,
       remark: recheckRemark,
       recheckTime: new Date().toLocaleString('zh-CN', { hour12: false }),
+      ...(currentDisposal ? { disposalId: currentDisposal.id } : {}),
     });
 
     setRecheckSlabId('');
@@ -177,6 +214,11 @@ export default function CleaningPage() {
     { value: 'downgrade', label: '降级', color: 'bg-orange-500' },
     { value: 'scrap', label: '判废', color: 'bg-red-500' },
   ];
+
+  const getInspectionResultLabel = (r: ReInspectionRecord['inspectionResult']): string => {
+    const found = inspectionResultOptions.find((o) => o.value === r);
+    return found?.label || (r === 'downgrade' ? '降级' : r);
+  };
 
   const detailSlab = detailSlabId ? slabList.find((s) => s.id === detailSlabId) : null;
   const detailCleanRec = detailSlabId ? getCleaningRecordOfSlab(detailSlabId) : null;
@@ -464,11 +506,13 @@ export default function CleaningPage() {
                     <option value="">-- 仅显示状态为待复检的板坯 --</option>
                     {recheckPendingSlabs.map((slab) => {
                       const rec = getCleaningRecordOfSlab(slab.id);
+                      const openDisposal = getOpenDisposalOfSlab(slab.id);
                       return (
                         <option key={slab.id} value={slab.id}>
                           {slab.slabNo} | {slab.steelGrade} | 缺陷:
                           {defectOptions.find((d) => d.value === rec?.defectType)?.label ||
                             rec?.defectType}
+                          {openDisposal ? ` (${getDisposalBadgeText(openDisposal)})` : ''}
                         </option>
                       );
                     })}
@@ -508,6 +552,39 @@ export default function CleaningPage() {
                       </div>
                     );
                   })()}
+
+                {currentDisposal && (
+                  <div className="bg-yellow-500/10 border border-yellow-500/60 rounded-lg p-3 space-y-2 shadow-[0_0_0_1px_rgba(234,179,8,0.2)]">
+                    <div className="flex items-center gap-2 mb-1">
+                      <FileText className="w-4 h-4 text-yellow-400" />
+                      <span className="text-xs font-semibold text-yellow-400">
+                        来源：质量处置台账
+                      </span>
+                    </div>
+                    <div className="space-y-1.5 text-xs">
+                      <div className="flex justify-between">
+                        <span className="text-steel-500">处置编号</span>
+                        <span className="text-yellow-300 font-mono">{currentDisposal.id}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-steel-500">来源类型</span>
+                        <span className="text-yellow-300">
+                          {sourceTypeLabel[currentDisposal.sourceType]}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-steel-500">返修次数</span>
+                        <span className="text-yellow-300 font-mono">
+                          {currentDisposal.reworkCount} 次
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-steel-500">发起时间</span>
+                        <span className="text-yellow-300">{currentDisposal.createdAt}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <div>
                   <label className="block text-xs text-steel-400 mb-2">复检结论</label>
@@ -573,15 +650,21 @@ export default function CleaningPage() {
                     recheckPendingSlabs.map((slab) => {
                       const rec = getCleaningRecordOfSlab(slab.id);
                       const rechecks = getReInspectionsOfSlab(slab.id);
+                      const openDisposal = getOpenDisposalOfSlab(slab.id);
                       return (
                         <div
                           key={slab.id}
                           className="bg-steel-800/30 border border-yellow-500/30 rounded-lg p-3 hover:bg-steel-800/60 transition-colors"
                         >
                           <div className="flex items-center justify-between mb-2">
-                            <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-3 flex-wrap">
                               <span className="font-mono text-white font-medium">{slab.slabNo}</span>
                               <StatusBadge status="warning" text="待复检" size="sm" />
+                              {openDisposal && (
+                                <span className="text-[10px] px-1.5 py-0.5 bg-yellow-500/20 text-yellow-400 rounded-full border border-yellow-500/30">
+                                  {getDisposalBadgeText(openDisposal)}
+                                </span>
+                              )}
                             </div>
                             <button
                               onClick={() => setRecheckSlabId(slab.id)}
@@ -724,9 +807,7 @@ export default function CleaningPage() {
                                         : 'bg-red-500'
                                     }`}
                                   >
-                                    {inspectionResultOptions.find(
-                                      (o) => o.value === r.inspectionResult
-                                    )?.label}
+                                    {getInspectionResultLabel(r.inspectionResult)}
                                   </span>
                                   <span className="text-steel-300 flex-1 truncate">
                                     {r.remark || '-'}
@@ -884,7 +965,7 @@ export default function CleaningPage() {
                                 : 'bg-red-500'
                             }`}
                           >
-                            {inspectionResultOptions.find((o) => o.value === r.inspectionResult)?.label}
+                            {getInspectionResultLabel(r.inspectionResult)}
                           </span>
                         </div>
                         <div className="grid grid-cols-2 gap-2 text-xs">

@@ -36,6 +36,7 @@ const stepLabels: Record<string, { text: string; color: string; iconColor: strin
   concession: { text: '让步接收', color: 'bg-blue-500/10 text-blue-400 border-blue-500/30', iconColor: 'border-blue-400' },
   scrapped: { text: '报废', color: 'bg-red-500/10 text-red-400 border-red-500/30', iconColor: 'border-red-400' },
   released: { text: '放行', color: 'bg-green-500/10 text-green-400 border-green-500/30', iconColor: 'border-green-400' },
+  recheck_passed: { text: '复检通过', color: 'bg-green-500/10 text-green-400 border-green-500/30', iconColor: 'border-green-400' },
 };
 
 export default function QualityDisposalPage() {
@@ -228,6 +229,7 @@ export default function QualityDisposalPage() {
             onToggle={() => setExpandedId(expandedId === d.id ? null : d.id)}
             onAct={() => setActingId(d.id)}
             latestReinspection={getLatestReinspection(d.slabId)}
+            reInspectionRecords={reInspectionRecords}
           />
         ))}
       </div>
@@ -328,6 +330,7 @@ function DisposalCard({
   onToggle,
   onAct,
   latestReinspection,
+  reInspectionRecords,
 }: {
   disposal: QualityDisposalRecord;
   slab?: Slab;
@@ -335,6 +338,7 @@ function DisposalCard({
   onToggle: () => void;
   onAct: () => void;
   latestReinspection?: { inspectionResult: string; remark: string; recheckTime: string; inspector: string };
+  reInspectionRecords: Array<{ id: string; inspectionResult: string; remark: string; recheckTime: string; inspector: string }>;
 }) {
   const isFinished = disposal.disposalStatus === 'finished';
   return (
@@ -459,36 +463,114 @@ function DisposalCard({
             </div>
           )}
 
-          {/* Step record timeline */}
-          {disposal.records.length > 0 && (
+          {/* 完整流转链时间线 */}
+          {(disposal.records.length > 0 || disposal.sourceRecordId) && (
             <div>
-              <p className="text-xs text-steel-400 mb-3">处置历史</p>
+              <p className="text-xs text-steel-400 mb-3">完整流转链</p>
               <div className="relative pl-5 border-l-2 border-steel-700/60 space-y-3">
-                {disposal.records
-                  .slice()
-                  .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-                  .map((rec, idx) => {
-                    const meta = stepLabels[rec.disposalType];
-                    return (
-                      <div key={rec.id} className="relative">
-                        <span
-                          className={`absolute -left-[22px] top-1 w-3 h-3 rounded-full bg-steel-900 border-2 ${meta.iconColor}`}
-                        />
-                        <div className={`rounded-lg p-3 border ${meta.color}`}>
-                          <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
-                            <span className="text-sm font-semibold">
-                              第 {disposal.records.length - idx} 步 · {meta.text}
-                            </span>
-                            <span className="text-xs font-mono opacity-80">{rec.timestamp}</span>
-                          </div>
-                          <div className="text-xs space-y-0.5 opacity-90">
-                            <p>操作人：{rec.operator}</p>
-                            {rec.remark && <p>说明：{rec.remark}</p>}
-                          </div>
+                {(() => {
+                  const sourceRecord = disposal.sourceRecordId
+                    ? reInspectionRecords.find((r) => r.id === disposal.sourceRecordId)
+                    : null;
+                  const sortedRecords = disposal.records
+                    .slice()
+                    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+                  const items: Array<{
+                    key: string;
+                    type: string;
+                    title: string;
+                    borderClass: string;
+                    dotClass: string;
+                    content: React.ReactNode;
+                  }> = [];
+
+                  if (sourceRecord) {
+                    items.push({
+                      key: 'source-' + sourceRecord.id,
+                      type: 'source',
+                      title: '来源复检结论：' + (sourceRecord.inspectionResult === 'scrap' ? '判废' : '降级'),
+                      borderClass: 'border-orange-500/30 bg-orange-500/10 text-orange-400',
+                      dotClass: 'border-orange-400',
+                      content: (
+                        <div className="text-xs space-y-0.5 opacity-90">
+                          <p>检验员：{sourceRecord.inspector}</p>
+                          <p>时间：{sourceRecord.recheckTime}</p>
+                          {sourceRecord.remark && <p>备注：{sourceRecord.remark}</p>}
                         </div>
+                      ),
+                    });
+                  }
+
+                  let reworkCounter = 0;
+                  sortedRecords.forEach((rec) => {
+                    const meta = stepLabels[rec.disposalType];
+                    if (rec.disposalType === 'rework') reworkCounter++;
+
+                    let title = meta.text;
+                    let extraContent: React.ReactNode = null;
+
+                    if (rec.disposalType === 'rework') {
+                      title = `第 ${reworkCounter} 次返修`;
+                      extraContent = <p className="text-yellow-300 mt-1">→ 转入复检页等待复检</p>;
+                    } else if (rec.disposalType === 'concession') {
+                      title = '让步接收';
+                    } else if (rec.disposalType === 'scrapped') {
+                      title = '报废确认';
+                    } else if (rec.disposalType === 'released') {
+                      title = '直接放行';
+                    } else if (rec.disposalType === 'recheck_passed') {
+                      title = '复检通过（自动闭环）';
+                      const resultText =
+                        rec.reInspectionResult === 'qualified'
+                          ? '复检合格'
+                          : rec.reInspectionResult === 'repaired'
+                          ? '修磨后合格'
+                          : rec.reInspectionResult || '';
+                      extraContent = (
+                        <>
+                          <p>
+                            复检结论：
+                            <span className="text-green-300">{resultText}</span>
+                          </p>
+                          {rec.reInspectionRecordId && (
+                            <p>关联复检编号：{rec.reInspectionRecordId.slice(0, 8)}...</p>
+                          )}
+                        </>
+                      );
+                    }
+
+                    items.push({
+                      key: rec.id,
+                      type: rec.disposalType,
+                      title,
+                      borderClass: meta.color,
+                      dotClass: meta.iconColor,
+                      content: (
+                        <div className="text-xs space-y-0.5 opacity-90">
+                          <p>操作人：{rec.operator}</p>
+                          <p>时间：{rec.timestamp}</p>
+                          {rec.remark && <p>备注：{rec.remark}</p>}
+                          {extraContent}
+                        </div>
+                      ),
+                    });
+                  });
+
+                  return items.map((item) => (
+                    <div key={item.key} className="relative">
+                      <span
+                        className={`absolute -left-[22px] top-1 w-3 h-3 rounded-full bg-steel-900 border-2 ${item.dotClass}`}
+                      />
+                      <div className={`rounded-lg p-3 border ${item.borderClass}`}>
+                        <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+                          <span className="text-sm font-semibold">{item.title}</span>
+                        </div>
+                        {item.content}
                       </div>
-                    );
-                  })}
+                    </div>
+                  ));
+                })()}
               </div>
             </div>
           )}
