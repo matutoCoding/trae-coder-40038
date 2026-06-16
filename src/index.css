@@ -1,0 +1,120 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  line-height: 1.5;
+  font-weight: 400;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background-color: #0f172a;
+  color: #e2e8f0;
+}
+
+@layer components {
+  .status-dot {
+    @apply w-2.5 h-2.5 rounded-full inline-block;
+  }
+
+  .status-running {
+    @apply bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)];
+  }
+
+  .status-warning {
+    @apply bg-yellow-500 shadow-[0_0_8px_rgba(234,179,8,0.6)] animate-blink;
+  }
+
+  .status-danger {
+    @apply bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)] animate-blink;
+  }
+
+  .status-standby {
+    @apply bg-gray-500;
+  }
+
+  .card-industrial {
+    @apply bg-steel-900/80 border border-steel-700/50 rounded-lg backdrop-blur-sm;
+  }
+
+  .card-header {
+    @apply px-4 py-3 border-b border-steel-700/50 flex items-center justify-between;
+  }
+
+  .card-title {
+    @apply text-sm font-semibold text-steel-200 tracking-wide;
+  }
+
+  .data-value {
+    @apply font-mono text-2xl font-bold text-white;
+  }
+
+  .data-unit {
+    @apply text-sm text-steel-400 ml-1;
+  }
+
+  .nav-item {
+    @apply flex items-center gap-3 px-4 py-3 text-steel-300 hover:bg-steel-800/50 hover:text-white transition-colors cursor-pointer border-l-2 border-transparent;
+  }
+
+  .nav-item-active {
+    @apply bg-industrial-900/50 text-white border-l-2 border-industrial-400;
+  }
+
+  .btn-primary {
+    @apply px-4 py-2 bg-industrial-600 hover:bg-industrial-500 text-white rounded transition-colors text-sm font-medium;
+  }
+
+  .btn-secondary {
+    @apply px-4 py-2 bg-steel-700 hover:bg-steel-600 text-white rounded transition-colors text-sm font-medium;
+  }
+
+  .btn-danger {
+    @apply px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded transition-colors text-sm font-medium;
+  }
+
+  .input-field {
+    @apply w-full px-3 py-2 bg-steel-800 border border-steel-600 rounded text-white placeholder-steel-500 focus:outline-none focus:border-industrial-500 focus:ring-1 focus:ring-industrial-500 text-sm;
+  }
+
+  .table-header {
+    @apply text-xs font-medium text-steel-400 uppercase tracking-wider;
+  }
+
+  .table-cell {
+    @apply px-4 py-3 text-sm text-steel-200;
+  }
+
+  .gauge-container {
+    @apply relative w-full h-4 bg-steel-800 rounded-full overflow-hidden;
+  }
+
+  .gauge-fill {
+    @apply h-full rounded-full transition-all duration-500 ease-out;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1e293b;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #475569;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
