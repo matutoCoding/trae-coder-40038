@@ -3,6 +3,7 @@ import { Gauge, Activity, Settings2, AlertTriangle } from 'lucide-react';
 import StatusBadge from '@/components/Status/StatusBadge';
 import TrendChart from '@/components/Chart/TrendChart';
 import LevelGauge from '@/components/Chart/LevelGauge';
+import AlertPanel from '@/components/Status/AlertPanel';
 import { useProductionStore } from '@/store/useProductionStore';
 import type { MoldStatus } from '@/types';
 
@@ -300,6 +301,16 @@ export default function MoldPage() {
               <span className="text-white">保护渣润滑</span>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* Module Alerts */}
+      <div className="card-industrial">
+        <div className="card-header">
+          <h2 className="card-title">本模块告警信息</h2>
+        </div>
+        <div className="p-3">
+          <AlertPanel moduleFilter="mold" showAll maxItems={5} />
         </div>
       </div>
     </div>

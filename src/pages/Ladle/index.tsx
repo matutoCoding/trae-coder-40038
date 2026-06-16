@@ -33,13 +33,13 @@ export default function LadlePage() {
     if (!formData.ladleNo || !formData.temperature || !formData.weight) return;
 
     addLadle({
-      id: `ladle-${Date.now()}`,
       ladleNo: formData.ladleNo,
       steelGrade: formData.steelGrade,
       temperature: parseFloat(formData.temperature),
       weight: parseFloat(formData.weight),
       receiveTime: new Date().toLocaleString('zh-CN', { hour12: false }),
       status: 'receiving',
+      heatNo: `H-${formData.steelGrade}-${Date.now().toString().slice(-4)}`,
     });
 
     setFormData({ ladleNo: '', steelGrade: 'Q235B', temperature: '', weight: '' });

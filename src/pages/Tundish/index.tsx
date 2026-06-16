@@ -3,6 +3,7 @@ import { Thermometer, Droplets, Clock, Play, Square, Plus, Minus } from 'lucide-
 import StatusBadge from '@/components/Status/StatusBadge';
 import TrendChart from '@/components/Chart/TrendChart';
 import LevelGauge from '@/components/Chart/LevelGauge';
+import AlertPanel from '@/components/Status/AlertPanel';
 import { useProductionStore } from '@/store/useProductionStore';
 import type { TundishStatus } from '@/types';
 
@@ -253,6 +254,16 @@ export default function TundishPage() {
               <span className="text-white">SEN-120 型</span>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* Module Alerts */}
+      <div className="card-industrial">
+        <div className="card-header">
+          <h2 className="card-title">本模块告警信息</h2>
+        </div>
+        <div className="p-3">
+          <AlertPanel moduleFilter="tundish" showAll maxItems={5} />
         </div>
       </div>
     </div>

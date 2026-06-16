@@ -1,17 +1,19 @@
 import { useState, useEffect } from 'react';
 import { Scissors, Flame, Ruler, Hash, Play, Square, Settings } from 'lucide-react';
 import StatusBadge from '@/components/Status/StatusBadge';
+import AlertPanel from '@/components/Status/AlertPanel';
 import { useProductionStore } from '@/store/useProductionStore';
-import { mockCuttingRecords } from '@/data/mockData';
 
 export default function CuttingPage() {
-  const { slabList, addSlab, updateSlabStatus } = useProductionStore();
+  const { slabList, addSlab, updateSlabStatus, cuttingRecords, addCuttingRecord } =
+    useProductionStore();
   const [cutLength, setCutLength] = useState('9.5');
   const [flameOn, setFlameOn] = useState(true);
   const [isCutting, setIsCutting] = useState(true);
-  const [cutCount, setCutCount] = useState(mockCuttingRecords.length);
-  const [records, setRecords] = useState(mockCuttingRecords);
+  const [cutCount, setCutCount] = useState(cuttingRecords.length);
   const [currentPosition, setCurrentPosition] = useState(6.2);
+
+  const cutCountTotal = cuttingRecords.length;
 
   useEffect(() => {
     if (!isCutting || !flameOn) return;
@@ -22,27 +24,37 @@ export default function CuttingPage() {
         const targetLength = parseFloat(cutLength);
         if (newPos >= targetLength) {
           setCutCount((c) => c + 1);
+          const slabNo = `B${new Date().toISOString().slice(2, 10).replace(/-/g, '')}${String(cutCountTotal + 1).padStart(3, '0')}`;
+          const nowStr = new Date().toLocaleString('zh-CN', { hour12: false });
+
+          // Create slab with pending_cut -> cut transition
           const newSlab = {
-            id: `slab-${Date.now()}`,
-            slabNo: `B${new Date().toISOString().slice(2, 10).replace(/-/g, '')}${String(cutCount + 1).padStart(3, '0')}`,
+            slabNo,
             width: 1500,
             thickness: 220,
             length: targetLength,
             steelGrade: 'Q235B',
             status: 'cut' as const,
-            cutTime: new Date().toLocaleString('zh-CN', { hour12: false }),
+            cutTime: nowStr,
           };
           addSlab(newSlab);
-          setRecords((r) => [
-            {
-              id: `cut-${Date.now()}`,
-              slabNo: newSlab.slabNo,
-              cutLength: targetLength,
-              cutTime: new Date().toLocaleString('zh-CN', { hour12: false }),
-              flameStatus: true,
-            },
-            ...r,
-          ]);
+
+          // Now get the slab ID we just created by reading latest from store
+          // (will be first element since addSlab prepends)
+          setTimeout(() => {
+            const fresh = useProductionStore.getState().slabList;
+            const created = fresh.find((s) => s.slabNo === slabNo);
+            if (created) {
+              addCuttingRecord({
+                slabId: created.id,
+                slabNo: created.slabNo,
+                cutLength: targetLength,
+                cutTime: nowStr,
+                flameStatus: true,
+              });
+            }
+          }, 0);
+
           return 0;
         }
         return newPos;
@@ -50,9 +62,11 @@ export default function CuttingPage() {
     }, 100);
 
     return () => clearInterval(interval);
-  }, [isCutting, flameOn, cutLength, cutCount, addSlab]);
+  }, [isCutting, flameOn, cutLength, cutCountTotal, addSlab, addCuttingRecord]);
 
   const pendingSlabs = slabList.filter((s) => s.status === 'cut');
+
+  const records = cuttingRecords;
 
   return (
     <div className="space-y-6">
@@ -91,7 +105,9 @@ export default function CuttingPage() {
             </div>
             <div>
               <p className="text-sm text-steel-400">今日切割数</p>
-              <p className="text-xl font-mono font-bold text-white">{cutCount} 块</p>
+              <p className="text-xl font-mono font-bold text-white">
+                {cuttingRecords.length} 块
+              </p>
             </div>
           </div>
         </div>
@@ -116,7 +132,11 @@ export default function CuttingPage() {
         <div className="card-header">
           <h2 className="card-title">火焰定尺切割示意图</h2>
           <div className="flex items-center gap-3">
-            <StatusBadge status={isCutting && flameOn ? 'running' : 'standby'} text={isCutting && flameOn ? '切割中' : '待机'} size="sm" />
+            <StatusBadge
+              status={isCutting && flameOn ? 'running' : 'standby'}
+              text={isCutting && flameOn ? '切割中' : '待机'}
+              size="sm"
+            />
           </div>
         </div>
 
@@ -131,20 +151,16 @@ export default function CuttingPage() {
                   <div key={i} className="flex-1 flex flex-col items-center">
                     <div className="w-px h-3 bg-white/30"></div>
                     {i % 2 === 0 && (
-                      <span className="text-[10px] text-white/60 font-mono mt-0.5">{i}m</span>
+                      <span className="text-[10px] text-white/60 font-mono mt-0.5">
+                        {i}m
+                      </span>
                     )}
                   </div>
                 ))}
               </div>
             </div>
 
-            {/* Cutting torch */}
-            <div
-              className="absolute top-0 bottom-0 w-1 -ml-0.5 transition-all duration-100"
-              style={{ left: `${(currentPosition / parseFloat(cutLength)) * 100}%`, display: 'none' }}
-            ></div>
-
-            {/* Fixed cutting position at target length */}
+            {/* Cutting torch at the end */}
             <div
               className="absolute top-0 bottom-0 w-6 -ml-3 flex flex-col items-center"
               style={{ left: '100%' }}
@@ -169,7 +185,10 @@ export default function CuttingPage() {
             </div>
 
             {/* Target line */}
-            <div className="absolute top-0 bottom-0 w-0.5 bg-green-500/50 -ml-px" style={{ left: '100%' }}>
+            <div
+              className="absolute top-0 bottom-0 w-0.5 bg-green-500/50 -ml-px"
+              style={{ left: '100%' }}
+            >
               <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 text-xs text-green-400 whitespace-nowrap">
                 定尺 {cutLength}m
               </div>
@@ -180,7 +199,9 @@ export default function CuttingPage() {
           <div className="mt-8">
             <div className="flex justify-between text-sm text-steel-400 mb-2">
               <span>切割进度</span>
-              <span className="font-mono">{((currentPosition / parseFloat(cutLength)) * 100).toFixed(1)}%</span>
+              <span className="font-mono">
+                {((currentPosition / parseFloat(cutLength)) * 100).toFixed(1)}%
+              </span>
             </div>
             <div className="h-2 bg-steel-800 rounded-full overflow-hidden">
               <div
@@ -302,7 +323,8 @@ export default function CuttingPage() {
                     <div>
                       <p className="text-sm text-white font-mono">{slab.slabNo}</p>
                       <p className="text-xs text-steel-500">
-                        {slab.length}m · {slab.steelGrade}
+                        {slab.length}m · {slab.steelGrade} · 来自{' '}
+                        {slab.ladleNo || '当前浇次'}
                       </p>
                     </div>
                     <StatusBadge status="success" text="待清理" size="sm" />
@@ -318,7 +340,7 @@ export default function CuttingPage() {
         {/* Cutting Records */}
         <div className="card-industrial">
           <div className="card-header">
-            <h2 className="card-title">切割记录</h2>
+            <h2 className="card-title">切割记录 (已持久化)</h2>
           </div>
           <div className="p-2 max-h-[380px] overflow-y-auto">
             {records.length > 0 ? (
@@ -333,7 +355,9 @@ export default function CuttingPage() {
                       <p className="text-xs text-steel-500">{record.cutTime}</p>
                     </div>
                     <div className="text-right">
-                      <p className="text-sm font-mono text-green-400">{record.cutLength}m</p>
+                      <p className="text-sm font-mono text-green-400">
+                        {record.cutLength}m
+                      </p>
                     </div>
                   </div>
                 ))}
@@ -342,6 +366,16 @@ export default function CuttingPage() {
               <p className="text-steel-500 text-center py-8">暂无切割记录</p>
             )}
           </div>
+        </div>
+      </div>
+
+      {/* Module Alerts */}
+      <div className="card-industrial">
+        <div className="card-header">
+          <h2 className="card-title">本模块告警信息</h2>
+        </div>
+        <div className="p-3">
+          <AlertPanel moduleFilter="cutting" showAll maxItems={5} />
         </div>
       </div>
     </div>

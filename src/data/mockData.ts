@@ -89,7 +89,15 @@ export const mockSlabList: Slab[] = [
     cleaningTime: '2024-06-17 09:20:00',
     warehouseTime: '2024-06-17 09:45:00',
     position: 'A-01-03',
-    segregationLevel: '合格',
+    segregationLevel: 'C1.5',
+    centerSegregation: '轻微中心偏析',
+    surfaceQuality: '良好',
+    ladleNo: 'L-2024-0617-01',
+    ladleTemp: 1568,
+    heatNo: 'H2024061701',
+    cutLength: 9.5,
+    cleaningResult: 'repaired',
+    defectType: 'crack',
   },
   {
     id: 'slab-002',
@@ -101,7 +109,13 @@ export const mockSlabList: Slab[] = [
     status: 'cleaned',
     cutTime: '2024-06-17 09:18:00',
     cleaningTime: '2024-06-17 09:35:00',
-    segregationLevel: '合格',
+    segregationLevel: 'C1.0',
+    ladleNo: 'L-2024-0617-01',
+    ladleTemp: 1568,
+    heatNo: 'H2024061701',
+    cutLength: 10.2,
+    cleaningResult: 'qualified',
+    defectType: 'none',
   },
   {
     id: 'slab-003',
@@ -110,8 +124,12 @@ export const mockSlabList: Slab[] = [
     thickness: 220,
     length: 9.8,
     steelGrade: 'Q235B',
-    status: 'cleaning',
+    status: 'cut',
     cutTime: '2024-06-17 09:30:00',
+    ladleNo: 'L-2024-0617-01',
+    ladleTemp: 1565,
+    heatNo: 'H2024061701',
+    cutLength: 9.8,
   },
   {
     id: 'slab-004',
@@ -119,9 +137,13 @@ export const mockSlabList: Slab[] = [
     width: 1500,
     thickness: 220,
     length: 8.5,
-    steelGrade: 'Q235B',
+    steelGrade: 'Q345B',
     status: 'cut',
     cutTime: '2024-06-17 09:42:00',
+    ladleNo: 'L-2024-0617-02',
+    ladleTemp: 1575,
+    heatNo: 'H2024061702',
+    cutLength: 8.5,
   },
   {
     id: 'slab-005',
@@ -129,28 +151,31 @@ export const mockSlabList: Slab[] = [
     width: 1500,
     thickness: 220,
     length: 0,
-    steelGrade: 'Q235B',
+    steelGrade: 'Q345B',
     status: 'pending_cut',
+    ladleNo: 'L-2024-0617-02',
+    ladleTemp: 1572,
+    heatNo: 'H2024061702',
   },
 ];
 
 export const mockCuttingRecords: CuttingRecord[] = [
-  { id: 'cut-001', slabNo: 'B240617001', cutLength: 9.5, cutTime: '2024-06-17 09:05:00', flameStatus: true },
-  { id: 'cut-002', slabNo: 'B240617002', cutLength: 10.2, cutTime: '2024-06-17 09:18:00', flameStatus: true },
-  { id: 'cut-003', slabNo: 'B240617003', cutLength: 9.8, cutTime: '2024-06-17 09:30:00', flameStatus: true },
-  { id: 'cut-004', slabNo: 'B240617004', cutLength: 8.5, cutTime: '2024-06-17 09:42:00', flameStatus: true },
+  { id: 'cut-001', slabId: 'slab-001', slabNo: 'B240617001', cutLength: 9.5, cutTime: '2024-06-17 09:05:00', flameStatus: true },
+  { id: 'cut-002', slabId: 'slab-002', slabNo: 'B240617002', cutLength: 10.2, cutTime: '2024-06-17 09:18:00', flameStatus: true },
+  { id: 'cut-003', slabId: 'slab-003', slabNo: 'B240617003', cutLength: 9.8, cutTime: '2024-06-17 09:30:00', flameStatus: true },
+  { id: 'cut-004', slabId: 'slab-004', slabNo: 'B240617004', cutLength: 8.5, cutTime: '2024-06-17 09:42:00', flameStatus: true },
 ];
 
 export const mockCleaningRecords: CleaningRecord[] = [
-  { id: 'clean-001', slabNo: 'B240617001', defectType: '表面裂纹', defectPosition: '上表面中部', cleaningMethod: '火焰清理', result: '合格', operator: '张工', time: '2024-06-17 09:20:00' },
-  { id: 'clean-002', slabNo: 'B240617002', defectType: '氧化铁皮', defectPosition: '侧面', cleaningMethod: '抛丸清理', result: '合格', operator: '李工', time: '2024-06-17 09:35:00' },
+  { id: 'clean-001', slabId: 'slab-001', slabNo: 'B240617001', defectType: 'crack', defectLocation: '上表面中部', cleaningMethod: 'flame', cleaningResult: 'repaired', operator: '张工', cleaningTime: '2024-06-17 09:20:00', remark: '已修磨，无深度裂纹' },
+  { id: 'clean-002', slabId: 'slab-002', slabNo: 'B240617002', defectType: 'none', defectLocation: '-', cleaningMethod: 'manual', cleaningResult: 'qualified', operator: '李工', cleaningTime: '2024-06-17 09:35:00', remark: '目视检查无缺陷' },
 ];
 
 export const mockAlerts: Alert[] = [
-  { id: 'alert-001', level: 'warning', module: '结晶器', message: '结晶器液位波动超出正常范围', time: '2024-06-17 09:25:00', resolved: false },
-  { id: 'alert-002', level: 'info', module: '二冷区', message: '二冷水流量自动调节完成', time: '2024-06-17 09:20:00', resolved: true },
-  { id: 'alert-003', level: 'danger', module: '中间包', message: '中间包温度低于下限值', time: '2024-06-17 09:10:00', resolved: true },
-  { id: 'alert-004', level: 'warning', module: '定尺切割', message: '切割长度偏差 +5mm', time: '2024-06-17 09:05:00', resolved: true },
+  { id: 'alert-001', level: 'warning', module: 'mold', message: '结晶器液位波动超出正常范围', time: '2024-06-17 09:25:00', resolved: false, paramName: 'liquidLevel' },
+  { id: 'alert-002', level: 'info', module: 'cooling', message: '二冷水流量自动调节完成', time: '2024-06-17 09:20:00', resolved: true },
+  { id: 'alert-003', level: 'danger', module: 'tundish', message: '中间包温度低于下限值', time: '2024-06-17 09:10:00', resolved: true, paramName: 'temperature' },
+  { id: 'alert-004', level: 'warning', module: 'cutting', message: '切割长度偏差 +5mm', time: '2024-06-17 09:05:00', resolved: true },
 ];
 
 export const mockProductionStats: ProductionStats = {

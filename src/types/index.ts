@@ -8,6 +8,16 @@ export type SlabStatus = 'pending_cut' | 'cut' | 'cleaning' | 'cleaned' | 'pendi
 
 export type AlertLevel = 'info' | 'warning' | 'danger';
 
+export type AlertModule = 'dashboard' | 'ladle' | 'tundish' | 'mold' | 'cooling' | 'cutting' | 'cleaning' | 'warehouse';
+
+export type SegregationLevel = 'C1.0' | 'C1.5' | 'C2.0' | 'C2.5' | 'C3.0';
+
+export type DefectType = 'none' | 'crack' | 'scar' | 'scratch' | 'bubble' | 'segregation';
+
+export type CleaningMethod = 'manual' | 'grinding' | 'flame' | 'machining';
+
+export type CleaningResult = 'qualified' | 'repaired' | 'recheck';
+
 export interface Ladle {
   id: string;
   steelGrade: string;
@@ -16,6 +26,14 @@ export interface Ladle {
   receiveTime: string;
   status: LadleStatus;
   ladleNo: string;
+  composition?: {
+    C?: number;
+    Si?: number;
+    Mn?: number;
+    P?: number;
+    S?: number;
+  };
+  heatNo?: string;
 }
 
 export interface Tundish {
@@ -57,11 +75,20 @@ export interface Slab {
   cleaningTime?: string;
   warehouseTime?: string;
   position?: string;
-  segregationLevel?: string;
+  segregationLevel?: SegregationLevel;
+  centerSegregation?: string;
+  surfaceQuality?: string;
+  heatNo?: string;
+  ladleNo?: string;
+  ladleTemp?: number;
+  cutLength?: number;
+  cleaningResult?: CleaningResult;
+  defectType?: DefectType;
 }
 
 export interface CuttingRecord {
   id: string;
+  slabId: string;
   slabNo: string;
   cutLength: number;
   cutTime: string;
@@ -70,22 +97,29 @@ export interface CuttingRecord {
 
 export interface CleaningRecord {
   id: string;
+  slabId: string;
   slabNo: string;
-  defectType: string;
-  defectPosition: string;
-  cleaningMethod: string;
-  result: string;
+  defectType: DefectType;
+  defectLocation: string;
+  cleaningMethod: CleaningMethod;
+  cleaningResult: CleaningResult;
   operator: string;
-  time: string;
+  remark?: string;
+  cleaningTime: string;
 }
 
 export interface Alert {
   id: string;
   level: AlertLevel;
-  module: string;
+  module: AlertModule;
   message: string;
   time: string;
   resolved: boolean;
+  resolvedTime?: string;
+  resolvedBy?: string;
+  paramName?: string;
+  currentValue?: number;
+  threshold?: { min?: number; max?: number };
 }
 
 export interface ProductionStats {
@@ -95,4 +129,19 @@ export interface ProductionStats {
   castingSpeed: number;
   passRate: number;
   runningTime: number;
+}
+
+export interface AlertThresholds {
+  tundish: {
+    temperature: { min: number; max: number };
+    liquidLevel: { min: number; max: number };
+  };
+  mold: {
+    liquidLevel: { min: number; max: number };
+    vibrationFreq: { min: number; max: number };
+  };
+  cooling: {
+    castingSpeed: { min: number; max: number };
+    waterFlow: { min: number; max: number };
+  };
 }

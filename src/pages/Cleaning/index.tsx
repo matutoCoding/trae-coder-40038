@@ -1,89 +1,105 @@
 import { useState } from 'react';
-import { Sparkles, CheckCircle, AlertTriangle, Search, Plus } from 'lucide-react';
+import { Brush, FileCheck, AlertTriangle, CheckCircle2, XCircle, Sparkles } from 'lucide-react';
 import StatusBadge from '@/components/Status/StatusBadge';
+import AlertPanel from '@/components/Status/AlertPanel';
 import { useProductionStore } from '@/store/useProductionStore';
-import type { SlabStatus } from '@/types';
-import { mockCleaningRecords } from '@/data/mockData';
+import type { CleaningMethod, DefectType } from '@/types';
 
-interface CleaningRecord {
-  id: string;
-  slabNo: string;
-  defectType: string;
-  defectPosition: string;
-  cleaningMethod: string;
-  result: string;
-  operator: string;
-  time: string;
-}
+const defectOptions: { value: DefectType; label: string }[] = [
+  { value: 'none', label: '无缺陷' },
+  { value: 'crack', label: '裂纹' },
+  { value: 'scar', label: '结疤' },
+  { value: 'scratch', label: '划痕' },
+  { value: 'bubble', label: '气泡' },
+  { value: 'segregation', label: '偏析' },
+];
+
+const cleaningMethods: { value: CleaningMethod; label: string }[] = [
+  { value: 'manual', label: '人工清理' },
+  { value: 'grinding', label: '砂轮打磨' },
+  { value: 'flame', label: '火焰清理' },
+  { value: 'machining', label: '机械加工' },
+];
 
 export default function CleaningPage() {
-  const { slabList, updateSlabStatus } = useProductionStore();
-  const [records, setRecords] = useState<CleaningRecord[]>(mockCleaningRecords);
-  const [showForm, setShowForm] = useState(false);
-  const [searchText, setSearchText] = useState('');
-  const [formData, setFormData] = useState({
-    slabNo: '',
-    defectType: '表面裂纹',
-    defectPosition: '上表面',
-    cleaningMethod: '火焰清理',
-    result: '合格',
-    operator: '张工',
-  });
+  const {
+    slabList,
+    cleaningRecords,
+    addCleaningRecord,
+  } = useProductionStore();
 
-  const pendingSlabs = slabList.filter((s) => s.status === 'cut' || s.status === 'cleaning');
-  const cleaningSlabs = slabList.filter((s) => s.status === 'cleaning');
-  const cleanedSlabs = slabList.filter((s) => s.status === 'cleaned');
+  const [selectedSlabId, setSelectedSlabId] = useState('');
+  const [defectType, setDefectType] = useState<DefectType>('none');
+  const [defectLocation, setDefectLocation] = useState('');
+  const [cleaningMethod, setCleaningMethod] = useState<CleaningMethod>('grinding');
+  const [cleaningResult, setCleaningResult] = useState<'qualified' | 'repaired' | 'recheck'>('qualified');
+  const [operator, setOperator] = useState('张工');
+  const [remark, setRemark] = useState('');
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!formData.slabNo) return;
+  // Slabs that are ready for cleaning (status: cut) or have been cleaned
+  const cleanedSlabIds = new Set(cleaningRecords.map((r) => r.slabId));
+  const cleanedSlabs = slabList.filter((s) => cleanedSlabIds.has(s.id));
+  const pendingSlabs = slabList.filter(
+    (s) => (s.status === 'cut' || s.status === 'cleaned' || s.status === 'pending_cut') && !cleanedSlabIds.has(s.id)
+  );
 
-    const newRecord: CleaningRecord = {
-      id: `clean-${Date.now()}`,
-      ...formData,
-      time: new Date().toLocaleString('zh-CN', { hour12: false }),
-    };
-    setRecords([newRecord, ...records]);
+  const records = cleaningRecords;
 
-    if (formData.result === '合格') {
-      updateSlabStatus(slabList.find((s) => s.slabNo === formData.slabNo)?.id || '', 'cleaned');
+  const handleSubmit = () => {
+    if (!selectedSlabId) {
+      alert('请先选择板坯');
+      return;
     }
 
-    setShowForm(false);
-    setFormData({
-      slabNo: '',
-      defectType: '表面裂纹',
-      defectPosition: '上表面',
-      cleaningMethod: '火焰清理',
-      result: '合格',
-      operator: '张工',
+    const slab = slabList.find((s) => s.id === selectedSlabId);
+    if (!slab) return;
+
+    addCleaningRecord({
+      slabId: selectedSlabId,
+      slabNo: slab.slabNo,
+      defectType,
+      defectLocation,
+      cleaningMethod,
+      cleaningResult,
+      operator,
+      remark,
+      cleaningTime: new Date().toLocaleString('zh-CN', { hour12: false }),
     });
+
+    // Reset
+    setSelectedSlabId('');
+    setDefectType('none');
+    setDefectLocation('');
+    setCleaningMethod('grinding');
+    setCleaningResult('qualified');
+    setRemark('');
   };
 
-  const startCleaning = (slabId: string, slabNo: string) => {
-    updateSlabStatus(slabId, 'cleaning');
-    setFormData((prev) => ({ ...prev, slabNo }));
-    setShowForm(true);
+  const getSeverityColor = (type: DefectType) => {
+    switch (type) {
+      case 'none':
+        return 'text-green-400';
+      case 'crack':
+      case 'segregation':
+        return 'text-red-400';
+      case 'scar':
+      case 'bubble':
+        return 'text-orange-400';
+      default:
+        return 'text-yellow-400';
+    }
   };
 
-  const defectTypes = ['表面裂纹', '氧化铁皮', '气孔', '夹渣', '划伤', '凹坑', '无缺陷'];
-  const defectPositions = ['上表面', '下表面', '左侧面', '右侧面', '角部'];
-  const cleaningMethods = ['火焰清理', '抛丸清理', '砂轮打磨', '酸洗', '机械清理'];
-
-  const stats = {
-    pending: pendingSlabs.length,
-    cleaning: cleaningSlabs.length,
-    cleaned: cleanedSlabs.length,
-    passRate: records.length > 0 
-      ? ((records.filter((r) => r.result === '合格').length / records.length) * 100).toFixed(1)
-      : '0',
+  const getResultIcon = (result: 'qualified' | 'repaired' | 'recheck') => {
+    switch (result) {
+      case 'qualified':
+        return <CheckCircle2 className="w-4 h-4 text-green-400" />;
+      case 'repaired':
+        return <CheckCircle2 className="w-4 h-4 text-blue-400" />;
+      case 'recheck':
+        return <AlertTriangle className="w-4 h-4 text-yellow-400" />;
+    }
   };
-
-  const filteredRecords = records.filter(
-    (r) =>
-      r.slabNo.toLowerCase().includes(searchText.toLowerCase()) ||
-      r.defectType.toLowerCase().includes(searchText.toLowerCase())
-  );
 
   return (
     <div className="space-y-6">
@@ -92,11 +108,23 @@ export default function CleaningPage() {
         <div className="card-industrial p-4">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-yellow-500/20 rounded-lg">
-              <Search className="w-5 h-5 text-yellow-400" />
+              <Brush className="w-5 h-5 text-yellow-400" />
             </div>
             <div>
               <p className="text-sm text-steel-400">待清理</p>
-              <p className="text-2xl font-mono font-bold text-yellow-400">{stats.pending}</p>
+              <p className="text-xl font-mono font-bold text-white">{pendingSlabs.length}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="card-industrial p-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-green-500/20 rounded-lg">
+              <FileCheck className="w-5 h-5 text-green-400" />
+            </div>
+            <div>
+              <p className="text-sm text-steel-400">已清理</p>
+              <p className="text-xl font-mono font-bold text-white">{cleaningRecords.length}</p>
             </div>
           </div>
         </div>
@@ -107,282 +135,266 @@ export default function CleaningPage() {
               <Sparkles className="w-5 h-5 text-blue-400" />
             </div>
             <div>
-              <p className="text-sm text-steel-400">清理中</p>
-              <p className="text-2xl font-mono font-bold text-blue-400">{stats.cleaning}</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="card-industrial p-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-green-500/20 rounded-lg">
-              <CheckCircle className="w-5 h-5 text-green-400" />
-            </div>
-            <div>
-              <p className="text-sm text-steel-400">已清理</p>
-              <p className="text-2xl font-mono font-bold text-green-400">{stats.cleaned}</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="card-industrial p-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-purple-500/20 rounded-lg">
-              <CheckCircle className="w-5 h-5 text-purple-400" />
-            </div>
-            <div>
               <p className="text-sm text-steel-400">合格率</p>
-              <p className="text-2xl font-mono font-bold text-purple-400">{stats.passRate}%</p>
+              <p className="text-xl font-mono font-bold text-white">
+                {cleaningRecords.length > 0
+                  ? `${Math.round(
+                      (cleaningRecords.filter((r) => r.cleaningResult !== 'recheck').length /
+                        cleaningRecords.length) *
+                        100
+                    )}%`
+                  : '--'}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="card-industrial p-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-red-500/20 rounded-lg">
+              <AlertTriangle className="w-5 h-5 text-red-400" />
+            </div>
+            <div>
+              <p className="text-sm text-steel-400">缺陷检出</p>
+              <p className="text-xl font-mono font-bold text-white">
+                {cleaningRecords.filter((r) => r.defectType !== 'none').length} 块
+              </p>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Main Content */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Pending Slabs */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Cleaning Record Form */}
         <div className="card-industrial">
           <div className="card-header">
-            <h2 className="card-title">待清理板坯</h2>
-            <span className="text-xs text-steel-400">{pendingSlabs.length} 块</span>
+            <h2 className="card-title">清理记录登记</h2>
           </div>
-          <div className="p-2 max-h-[400px] overflow-y-auto">
-            {pendingSlabs.length > 0 ? (
-              <div className="space-y-2">
+          <div className="p-4 space-y-4">
+            {/* Slab Selection */}
+            <div>
+              <label className="block text-sm text-steel-400 mb-1.5">选择板坯</label>
+              <select
+                value={selectedSlabId}
+                onChange={(e) => setSelectedSlabId(e.target.value)}
+                className="input-field"
+              >
+                <option value="">-- 请选择待清理板坯 --</option>
                 {pendingSlabs.map((slab) => (
-                  <div
-                    key={slab.id}
-                    className="p-3 bg-steel-800/50 rounded-lg border border-steel-700/50"
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="font-mono text-white text-sm">{slab.slabNo}</span>
-                      <StatusBadge
-                        status={slab.status === 'cleaning' ? 'running' : 'warning'}
-                        text={slab.status === 'cleaning' ? '清理中' : '待清理'}
-                        size="sm"
-                      />
-                    </div>
-                    <div className="text-xs text-steel-400 space-y-1">
-                      <p>规格: {slab.width}×{slab.thickness}×{slab.length}m</p>
-                      <p>钢种: {slab.steelGrade}</p>
-                    </div>
-                    {slab.status === 'cut' && (
-                      <button
-                        onClick={() => startCleaning(slab.id, slab.slabNo)}
-                        className="w-full mt-2 py-1.5 bg-industrial-600 hover:bg-industrial-500 text-white rounded text-xs transition-colors"
-                      >
-                        开始清理
-                      </button>
-                    )}
-                  </div>
+                  <option key={slab.id} value={slab.id}>
+                    {slab.slabNo} | {slab.steelGrade} | {slab.length}m
+                    {slab.ladleNo ? ` | ${slab.ladleNo}` : ''}
+                  </option>
                 ))}
+              </select>
+              {pendingSlabs.length === 0 && (
+                <p className="text-xs text-steel-500 mt-1">所有板坯已完成清理</p>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm text-steel-400 mb-1.5">缺陷类型</label>
+                <select
+                  value={defectType}
+                  onChange={(e) => setDefectType(e.target.value as DefectType)}
+                  className="input-field"
+                >
+                  {defectOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
               </div>
-            ) : (
-              <p className="text-steel-500 text-center py-8">暂无待清理板坯</p>
-            )}
+
+              <div>
+                <label className="block text-sm text-steel-400 mb-1.5">缺陷位置</label>
+                <input
+                  type="text"
+                  value={defectLocation}
+                  onChange={(e) => setDefectLocation(e.target.value)}
+                  className="input-field"
+                  placeholder="例: 上表面距头部2m处"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm text-steel-400 mb-1.5">清理方式</label>
+                <select
+                  value={cleaningMethod}
+                  onChange={(e) => setCleaningMethod(e.target.value as CleaningMethod)}
+                  className="input-field"
+                >
+                  {cleaningMethods.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm text-steel-400 mb-1.5">清理结果</label>
+                <select
+                  value={cleaningResult}
+                  onChange={(e) =>
+                    setCleaningResult(e.target.value as 'qualified' | 'repaired' | 'recheck')
+                  }
+                  className="input-field"
+                >
+                  <option value="qualified">合格</option>
+                  <option value="repaired">修磨合格</option>
+                  <option value="recheck">待复检</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm text-steel-400 mb-1.5">操作工</label>
+              <input
+                type="text"
+                value={operator}
+                onChange={(e) => setOperator(e.target.value)}
+                className="input-field"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm text-steel-400 mb-1.5">备注</label>
+              <textarea
+                value={remark}
+                onChange={(e) => setRemark(e.target.value)}
+                rows={2}
+                className="input-field resize-none"
+                placeholder="清理详情说明..."
+              />
+            </div>
+
+            <button onClick={handleSubmit} className="btn-primary w-full" disabled={!selectedSlabId}>
+              提交清理记录
+            </button>
           </div>
         </div>
 
-        {/* Cleaning Records */}
-        <div className="card-industrial lg:col-span-2">
-          <div className="card-header">
-            <h2 className="card-title">清理记录</h2>
-            <div className="flex items-center gap-3">
-              <div className="relative">
-                <Search className="w-4 h-4 text-steel-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  placeholder="搜索..."
-                  value={searchText}
-                  onChange={(e) => setSearchText(e.target.value)}
-                  className="input-field pl-9 w-48 text-xs"
-                />
-              </div>
-              <button onClick={() => setShowForm(true)} className="btn-primary flex items-center gap-1 text-xs">
-                <Plus className="w-3.5 h-3.5" />
-                新增记录
-              </button>
+        {/* Pending and Cleaned Lists */}
+        <div className="space-y-6">
+          {/* Pending */}
+          <div className="card-industrial">
+            <div className="card-header">
+              <h2 className="card-title">待清理板坯</h2>
+              <span className="text-xs text-yellow-400">{pendingSlabs.length} 块</span>
+            </div>
+            <div className="p-2 max-h-[240px] overflow-y-auto">
+              {pendingSlabs.length > 0 ? (
+                <div className="space-y-1">
+                  {pendingSlabs.map((slab) => (
+                    <div
+                      key={slab.id}
+                      className="flex items-center justify-between px-3 py-2 hover:bg-steel-800/50 rounded transition-colors cursor-pointer"
+                      onClick={() => setSelectedSlabId(slab.id)}
+                    >
+                      <div>
+                        <p className="text-sm text-white font-mono">{slab.slabNo}</p>
+                        <p className="text-xs text-steel-500">
+                          {slab.length}m · {slab.steelGrade}
+                          {slab.cutTime ? ` · ${slab.cutTime}` : ''}
+                        </p>
+                      </div>
+                      <StatusBadge status="warning" text="待清理" size="sm" />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-steel-500 text-center py-8">暂无待清理板坯</p>
+              )}
             </div>
           </div>
 
-          <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
-            <table className="w-full">
-              <thead className="sticky top-0 bg-steel-900">
-                <tr className="border-b border-steel-700/50">
-                  <th className="table-cell text-left table-header">板坯号</th>
-                  <th className="table-cell text-left table-header">缺陷类型</th>
-                  <th className="table-cell text-left table-header">位置</th>
-                  <th className="table-cell text-left table-header">清理方式</th>
-                  <th className="table-cell text-left table-header">结果</th>
-                  <th className="table-cell text-left table-header">操作工</th>
-                  <th className="table-cell text-left table-header">时间</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredRecords.map((record) => (
-                  <tr
-                    key={record.id}
-                    className="border-b border-steel-700/30 hover:bg-steel-800/30 transition-colors"
-                  >
-                    <td className="table-cell font-mono text-sm">{record.slabNo}</td>
-                    <td className="table-cell text-sm">
-                      <span className={`${
-                        record.defectType === '无缺陷' ? 'text-green-400' : 'text-yellow-400'
-                      }`}>
-                        {record.defectType}
-                      </span>
-                    </td>
-                    <td className="table-cell text-sm text-steel-300">{record.defectPosition}</td>
-                    <td className="table-cell text-sm text-steel-300">{record.cleaningMethod}</td>
-                    <td className="table-cell">
-                      <StatusBadge
-                        status={record.result === '合格' ? 'success' : 'warning'}
-                        text={record.result}
-                        size="sm"
-                      />
-                    </td>
-                    <td className="table-cell text-sm text-steel-300">{record.operator}</td>
-                    <td className="table-cell text-sm text-steel-400">{record.time}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          {/* Recently Cleaned */}
+          <div className="card-industrial">
+            <div className="card-header">
+              <h2 className="card-title">最近清理记录 (已持久化)</h2>
+            </div>
+            <div className="p-2 max-h-[260px] overflow-y-auto">
+              {records.length > 0 ? (
+                <div className="space-y-2">
+                  {records.slice(0, 6).map((record) => (
+                    <div
+                      key={record.id}
+                      className="px-3 py-2 bg-steel-800/30 rounded hover:bg-steel-800/50 transition-colors"
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-sm font-mono text-white">{record.slabNo}</span>
+                        <div className="flex items-center gap-2">
+                          {getResultIcon(record.cleaningResult)}
+                          <span className="text-xs text-steel-400">{record.operator}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 text-xs">
+                        <span className={getSeverityColor(record.defectType)}>
+                          {defectOptions.find((d) => d.value === record.defectType)?.label}
+                        </span>
+                        <span className="text-steel-500">
+                          {cleaningMethods.find((m) => m.value === record.cleaningMethod)?.label}
+                        </span>
+                        <span className="text-steel-500 ml-auto">{record.cleaningTime}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-steel-500 text-center py-8">暂无清理记录</p>
+              )}
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Cleaning Quality Analysis */}
+      {/* Defect Statistics */}
       <div className="card-industrial">
         <div className="card-header">
-          <h2 className="card-title">缺陷统计分析</h2>
+          <h2 className="card-title">缺陷类型统计</h2>
         </div>
-        <div className="p-4 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
-          {defectTypes.slice(0, -1).map((type) => {
-            const count = records.filter((r) => r.defectType === type).length;
-            const total = records.length;
-            const percentage = total > 0 ? ((count / total) * 100).toFixed(1) : '0';
-            return (
-              <div key={type} className="text-center p-3 bg-steel-800/30 rounded-lg">
-                <p className="text-2xl font-mono font-bold text-white">{count}</p>
-                <p className="text-xs text-steel-400 mt-1">{type}</p>
-                <div className="mt-2 h-1.5 bg-steel-700 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-industrial-500 rounded-full"
-                    style={{ width: `${percentage}%` }}
-                  ></div>
+        <div className="p-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+            {defectOptions.map((opt) => {
+              const count = records.filter((r) => r.defectType === opt.value).length;
+              const totalWithDefect = records.filter((r) => r.defectType !== 'none').length || 1;
+              const pct =
+                opt.value === 'none'
+                  ? records.length > 0
+                    ? Math.round((count / records.length) * 100)
+                    : 0
+                  : Math.round((count / totalWithDefect) * 100);
+              return (
+                <div key={opt.value} className="bg-steel-800/50 rounded-lg p-3">
+                  <p className="text-xs text-steel-400 mb-1">{opt.label}</p>
+                  <p className="text-lg font-bold text-white">{count}</p>
+                  <div className="mt-2 h-1 bg-steel-700 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-industrial-500 rounded-full"
+                      style={{ width: `${pct}%` }}
+                    ></div>
+                  </div>
                 </div>
-                <p className="text-xs text-steel-500 mt-1">{percentage}%</p>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
       </div>
 
-      {/* Add Form Modal */}
-      {showForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="card-industrial w-full max-w-lg mx-4">
-            <div className="card-header">
-              <h2 className="card-title">新增清理记录</h2>
-              <button
-                onClick={() => setShowForm(false)}
-                className="text-steel-400 hover:text-white transition-colors"
-              >
-                ✕
-              </button>
-            </div>
-            <form onSubmit={handleSubmit} className="p-4 space-y-4">
-              <div>
-                <label className="block text-sm text-steel-300 mb-1.5">板坯号</label>
-                <input
-                  type="text"
-                  value={formData.slabNo}
-                  onChange={(e) => setFormData({ ...formData, slabNo: e.target.value })}
-                  className="input-field"
-                  placeholder="选择或输入板坯号"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm text-steel-300 mb-1.5">缺陷类型</label>
-                  <select
-                    value={formData.defectType}
-                    onChange={(e) => setFormData({ ...formData, defectType: e.target.value })}
-                    className="input-field"
-                  >
-                    {defectTypes.map((t) => (
-                      <option key={t} value={t}>{t}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm text-steel-300 mb-1.5">缺陷位置</label>
-                  <select
-                    value={formData.defectPosition}
-                    onChange={(e) => setFormData({ ...formData, defectPosition: e.target.value })}
-                    className="input-field"
-                  >
-                    {defectPositions.map((p) => (
-                      <option key={p} value={p}>{p}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm text-steel-300 mb-1.5">清理方式</label>
-                  <select
-                    value={formData.cleaningMethod}
-                    onChange={(e) => setFormData({ ...formData, cleaningMethod: e.target.value })}
-                    className="input-field"
-                  >
-                    {cleaningMethods.map((m) => (
-                      <option key={m} value={m}>{m}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm text-steel-300 mb-1.5">判定结果</label>
-                  <select
-                    value={formData.result}
-                    onChange={(e) => setFormData({ ...formData, result: e.target.value })}
-                    className="input-field"
-                  >
-                    <option value="合格">合格</option>
-                    <option value="待复检">待复检</option>
-                    <option value="不合格">不合格</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm text-steel-300 mb-1.5">操作工</label>
-                <input
-                  type="text"
-                  value={formData.operator}
-                  onChange={(e) => setFormData({ ...formData, operator: e.target.value })}
-                  className="input-field"
-                />
-              </div>
-
-              <div className="flex justify-end gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowForm(false)}
-                  className="btn-secondary"
-                >
-                  取消
-                </button>
-                <button type="submit" className="btn-primary">
-                  确认提交
-                </button>
-              </div>
-            </form>
-          </div>
+      {/* Module Alerts */}
+      <div className="card-industrial">
+        <div className="card-header">
+          <h2 className="card-title">本模块告警信息</h2>
         </div>
-      )}
+        <div className="p-3">
+          <AlertPanel moduleFilter="cleaning" showAll maxItems={5} />
+        </div>
+      </div>
     </div>
   );
 }

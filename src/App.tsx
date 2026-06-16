@@ -1,6 +1,7 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import MainLayout from '@/components/Layout/MainLayout';
 import Dashboard from '@/pages/Dashboard';
+import TracingPage from '@/pages/Tracing';
 import LadlePage from '@/pages/Ladle';
 import TundishPage from '@/pages/Tundish';
 import MoldPage from '@/pages/Mold';
@@ -15,6 +16,7 @@ export default function App() {
       <Routes>
         <Route element={<MainLayout />}>
           <Route path="/" element={<Dashboard />} />
+          <Route path="/tracing" element={<TracingPage />} />
           <Route path="/ladle" element={<LadlePage />} />
           <Route path="/tundish" element={<TundishPage />} />
           <Route path="/mold" element={<MoldPage />} />

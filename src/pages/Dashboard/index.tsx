@@ -6,14 +6,12 @@ import {
   CheckCircle2,
   Clock,
   TrendingUp,
-  AlertTriangle,
-  AlertCircle,
-  Info,
   ArrowRight,
 } from 'lucide-react';
 import StatCard from '@/components/Card/StatCard';
 import TrendChart from '@/components/Chart/TrendChart';
 import StatusBadge from '@/components/Status/StatusBadge';
+import AlertPanel from '@/components/Status/AlertPanel';
 import { useProductionStore } from '@/store/useProductionStore';
 import { useNavigate } from 'react-router-dom';
 
@@ -53,17 +51,6 @@ export default function Dashboard() {
   const processingSlabs = slabList.filter(
     (s) => s.status !== 'warehoused' && s.status !== 'pending_cut'
   );
-
-  const getAlertIcon = (level: string) => {
-    switch (level) {
-      case 'danger':
-        return <AlertCircle className="w-4 h-4 text-red-400" />;
-      case 'warning':
-        return <AlertTriangle className="w-4 h-4 text-yellow-400" />;
-      default:
-        return <Info className="w-4 h-4 text-blue-400" />;
-    }
-  };
 
   return (
     <div className="space-y-6">
@@ -110,6 +97,33 @@ export default function Dashboard() {
           icon={Clock}
         />
       </div>
+
+      {/* Alert Summary Bar */}
+      {unresolvedAlerts.length > 0 && (
+        <div className="card-industrial p-3 flex items-center gap-4 border-yellow-500/30">
+          <div className="flex items-center gap-2">
+            <span className="w-3 h-3 rounded-full bg-red-500 animate-blink shadow-[0_0_10px_rgba(239,68,68,0.6)]"></span>
+            <span className="text-sm text-yellow-400 font-medium">
+              有 {unresolvedAlerts.length} 条告警待处理
+            </span>
+          </div>
+          <div className="flex-1 flex flex-wrap gap-3 text-xs">
+            {['tundish', 'mold', 'cooling'].map((m) => {
+              const count = unresolvedAlerts.filter((a) => a.module === m).length;
+              if (count === 0) return null;
+              const label = { tundish: '中间包', mold: '结晶器', cooling: '二冷拉矫' }[m] || m;
+              return (
+                <span
+                  key={m}
+                  className="px-2 py-0.5 bg-red-500/10 text-red-400 rounded-full"
+                >
+                  {label} × {count}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Process Flow */}
       <div className="card-industrial p-4">
@@ -308,32 +322,8 @@ export default function Dashboard() {
               </span>
             )}
           </div>
-          <div className="p-2 max-h-[220px] overflow-y-auto">
-            {alerts.length > 0 ? (
-              <div className="space-y-1">
-                {alerts.slice(0, 8).map((alert) => (
-                  <div
-                    key={alert.id}
-                    className={`flex items-start gap-3 px-3 py-2 rounded transition-colors ${
-                      alert.resolved ? 'opacity-60' : 'hover:bg-steel-800/50'
-                    }`}
-                  >
-                    {getAlertIcon(alert.level)}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm text-white truncate">{alert.message}</p>
-                      <p className="text-xs text-steel-500">
-                        {alert.module} · {alert.time}
-                      </p>
-                    </div>
-                    {alert.resolved && (
-                      <CheckCircle2 className="w-4 h-4 text-green-500 flex-shrink-0" />
-                    )}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-steel-500 text-center py-4">暂无告警</p>
-            )}
+          <div className="p-2 max-h-[260px] overflow-y-auto">
+            <AlertPanel maxItems={8} />
           </div>
         </div>
       </div>
